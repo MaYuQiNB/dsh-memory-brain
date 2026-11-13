@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Memory Brain",
+    "description": "A human-brain-inspired memory system: tags every conversation turn in each task, forgets over time on the Ebbinghaus curve, and visualizes the whole memory network as a full-page force-directed graph."
+  }
+}
