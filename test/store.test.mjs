@@ -461,3 +461,64 @@ test('forgetAfterDays maps to the engine half-life and migrates legacy banks', (
   advance(DAY * 4)
   assert.equal(nodeOf(fresh, record.id).state, 'forgotten')
 })
+
+test('reaching the forgetting time deletes the readable content', () => {
+  const { store, advance } = makeStore()
+  const record = ingest(store, {
+    sessionId: 'session-forget',
+    sessionTitle: '秘密任务',
+    turn: 1,
+    userTexts: ['这是一条会被遗忘的秘密记忆，里面有关键词 蓝鲸计划'],
+    assistantTexts: ['好的，我记住了蓝鲸计划'],
+    toolNames: ['write'],
+  })
+  assert.ok(record)
+  assert.ok(store.find(record.id).userText.includes('蓝鲸计划'))
+  assert.equal(store.sweepForgotten(), 0, 'nothing is forgotten while still retained')
+
+  advance(DAY * 30)
+  assert.equal(store.sweepForgotten(), 1, 'one memory reached the forgetting time')
+
+  const tombstone = store.find(record.id)
+  assert.ok(tombstone, 'the record survives as an empty tombstone')
+  assert.equal(tombstone.contentPurged, true)
+  assert.equal(tombstone.forgottenVia, 'time')
+  assert.ok(tombstone.forgottenAt > 0)
+  for (const field of ['userText', 'assistantText', 'excerpt', 'text', 'label', 'sessionTitle']) {
+    assert.equal(tombstone[field], '', `${field} was deleted`)
+  }
+  assert.deepEqual(tombstone.tags, [])
+  assert.deepEqual(tombstone.toolNames, [])
+  const persisted = JSON.stringify(store.serialize())
+  assert.equal(persisted.includes('蓝鲸计划'), false, 'content is gone from the persisted payload')
+  assert.equal(store.recall({ query: '蓝鲸计划' }).length, 0, 'cannot be recalled any more')
+  assert.throws(() => store.restore(record.id), MemoryError)
+  assert.equal(store.sweepForgotten(), 0, 'sweep is idempotent')
+
+  const reloaded = new MemoryStore({ now: () => START })
+  reloaded.load(store.serialize())
+  const reloadedTombstone = reloaded.find(record.id)
+  assert.equal(reloadedTombstone.contentPurged, true)
+  assert.equal(reloadedTombstone.excerpt, '')
+
+  const slept = store.commitLight(() => store.sleep())
+  assert.equal(slept.consolidated, 0)
+  assert.equal(store.memories.filter((memory) => memory.kind === 'semantic').length, 0)
+  advance(DAY * 10)
+  store.commitLight(() => store.sleep())
+  assert.equal(store.find(record.id), undefined, 'the tombstone was eventually purged')
+})
+
+test('manual forgetting stays reversible, sweep only deletes time-driven forgetting', () => {
+  const { store, advance } = makeStore()
+  const manual = ingest(store, { turn: 1, sessionId: 'session-manual' })
+  store.forget(manual.id)
+  advance(DAY * 2)
+  assert.equal(store.sweepForgotten(), 0, 'manual ghosts are not scrubbed by the time sweep')
+  assert.equal(store.find(manual.id).contentPurged, false)
+  assert.notEqual(store.find(manual.id).excerpt, '')
+  store.restore(manual.id)
+  assert.equal(store.find(manual.id).forgottenAt, 0)
+  assert.equal(store.find(manual.id).forgottenVia, '')
+  assert.notEqual(store.find(manual.id).excerpt, '', 'restored memory keeps its content')
+})

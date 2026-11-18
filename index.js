@@ -184,6 +184,18 @@ export function apply(ctx) {
       }
     } finally {
       loaded = true
+      // Enforce the forgetting time on the persisted bank: memories that crossed
+      // it while DSH was offline get their content deleted right away.
+      try {
+        const scrubbed = store.commitLight(() => store.sweepForgotten(Date.now()))
+        if (scrubbed > 0) {
+          void store.flush()
+          ctx.logger?.info?.(`dsh-memory-brain: ${scrubbed} memories reached the forgetting time; content deleted`)
+        }
+      } catch (error) {
+        ctx.logger?.warn?.('dsh-memory-brain: forgetting sweep on load failed')
+        ctx.logger?.warn?.(error)
+      }
       const backlog = pendingEvents.splice(0, pendingEvents.length)
       for (const [session, event] of backlog) handleSessionEvent(session, event)
     }
@@ -423,21 +435,28 @@ export function apply(ctx) {
   }, 'dsh-memory-brain: initial capture')
 
   // ---------------------------------------------------------------------
-  // Periodic consolidation ("sleep")
+  // Periodic sweep + consolidation ("forgetting time" + "sleep")
   // ---------------------------------------------------------------------
 
   let sleepTimer = null
   ctx.effect(() => {
     sleepTimer = setInterval(() => {
       if (!loaded || store.memories.length === 0) return
-      const interval = Math.max(1, store.settings.consolidateEveryHours) * 60 * 60 * 1000
-      if (Date.now() - store.lastSleepAt < interval) return
       try {
+        // Every tick: once a memory reaches its forgetting time, delete its
+        // readable content (it becomes an empty tombstone).
+        const scrubbed = store.commitLight(() => store.sweepForgotten(Date.now()))
+        if (scrubbed > 0) {
+          void store.flush()
+          ctx.logger?.info?.(`dsh-memory-brain: ${scrubbed} memories reached the forgetting time; content deleted`)
+        }
+        const interval = Math.max(1, store.settings.consolidateEveryHours) * 60 * 60 * 1000
+        if (Date.now() - store.lastSleepAt < interval) return
         const result = store.commitLight(() => store.sleep(Date.now()))
         void store.flush()
         ctx.logger?.info?.(`dsh-memory-brain: sleep — consolidated ${result.marked} episodes into ${result.consolidated} semantic memories, purged ${result.purged}`)
       } catch (error) {
-        ctx.logger?.warn?.('dsh-memory-brain: sleep failed')
+        ctx.logger?.warn?.('dsh-memory-brain: sweep/sleep failed')
         ctx.logger?.warn?.(error)
       }
     }, SLEEP_CHECK_MS)
@@ -447,7 +466,7 @@ export function apply(ctx) {
       sleepTimer = null
       store.dispose()
     }
-  }, 'dsh-memory-brain: sleep timer')
+  }, 'dsh-memory-brain: sweep + sleep timer')
 
   // ---------------------------------------------------------------------
   // HTTP API — the panel's only data channel
@@ -601,7 +620,8 @@ export function apply(ctx) {
       '- remember：主动记住一条重要事实，参数 text，可选 tags（字符串数组）。',
       '- tag / untag：给一条记忆加/删标签，参数 id、tag。',
       '- rehearse：唤醒/强化一条记忆，参数 id。',
-      '- forget：遗忘一条记忆，参数 id，可选 hard=true 彻底删除。',
+      '- forget：手动遗忘一条记忆，参数 id，可选 hard=true 彻底删除；soft 遗忘可 restore。',
+      '- 自动遗忘（不需要调用工具）：到达遗忘时间后，记忆的可读内容会被永久删除，只剩一个空的「已遗忘」墓碑（不可恢复），之后会被清理掉。',
       '- restore：恢复被遗忘的记忆，参数 id。',
       '- pin：固定/取消固定长期记忆，参数 id、pinned（布尔）。',
       '- sleep：立刻做一次巩固（合并语义记忆 + 清理彻底衰减的记忆）。',
@@ -747,7 +767,7 @@ export function apply(ctx) {
         '一个模仿人脑的长期记忆库已挂载：每个任务里的对话轮次会自动编码成带标签的“情节记忆”，随时间按遗忘曲线衰减、遗忘；重复想起会强化，巩固睡眠会把相似情节合并成“语义记忆”。',
         `当前：${summary.total} 条记忆（活跃 ${summary.active} / 消退 ${summary.fading} / 遗忘 ${summary.forgotten} / 固定 ${summary.pinned}），覆盖 ${summary.sessions} 个任务、${summary.tags} 个标签，平均保持率 ${Math.round((Number(summary.avgRetention) || 0) * 100)}%。`,
         'QQ 桥接的聊天（QQ 好友/群）也会自动进入这个记忆库：记忆带「QQ」标签、归属于独立的 QQ 会话；用户问起 QQ 上聊过的事时，用 brain_memory recall（可加 tag="QQ"）就能想起来。',
-        `当前遗忘时间：${store.publicSettings().forgetAfterDays} 天（用户可在设置面板手动改，或让 agent 调 brain_memory 的 settings 动作改 forgetAfterDays）。`,
+        `当前遗忘时间：${store.publicSettings().forgetAfterDays} 天（用户可在设置面板手动改，或让 agent 调 brain_memory 的 settings 动作改 forgetAfterDays）。到时间后记忆内容会被真正删除，只剩空墓碑。`,
         '需要回忆旧信息时调用 brain_memory 工具：recall 按关键词/标签检索（检索本身会强化记忆）；state 看统计；remember 主动记住一条重要事实；tag/untag 改标签；rehearse 强化；forget/restore 遗忘或恢复；pin 固定为长期记忆；sleep 做一次巩固；capture 扫描历史会话。',
         '不要在回答里复述这段说明；只在确实需要旧信息时使用工具。',
       ].join('\n')

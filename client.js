@@ -161,6 +161,8 @@ window.__ModuleLoader__.load({
       'detail.none.title': '还没选中记忆',
       'detail.none.body': '点画布里的节点，看摘要、标签和保持率曲线。',
       'detail.excerpt': '摘要',
+      'detail.tombstone': '这条记忆已到遗忘时间，内容已被永久删除（不可恢复）。',
+      'tombstone.label': '已遗忘',
       'detail.semanticNote': '语义记忆：由 {count} 条情节记忆巩固合并而成。',
       'detail.meta': '元信息',
       'detail.session': '任务',
@@ -316,6 +318,8 @@ window.__ModuleLoader__.load({
       'detail.none.title': 'No memory selected',
       'detail.none.body': 'Click a node in the canvas to see its excerpt, tags, and retention curve.',
       'detail.excerpt': 'Excerpt',
+      'detail.tombstone': 'This memory reached its forgetting time; its content was permanently deleted (unrecoverable).',
+      'tombstone.label': 'Forgotten',
       'detail.semanticNote': 'Semantic memory: consolidated from {count} episodic memories.',
       'detail.meta': 'Details',
       'detail.session': 'Task',
@@ -1462,6 +1466,21 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * A memory whose readable content was deleted when it reached the forgetting
+     * time (CONTRACT 11): the episode keeps only structural metadata, so it has
+     * no excerpt, no tags and no task title left.
+     * @param {any} node Normalized memory node.
+     * @returns {boolean}
+     */
+    function isTombstoneNode(node) {
+      if (!isObject(node) || node.kind !== 'episode') return false
+      if (typeof node.excerpt === 'string' && node.excerpt !== '') return false
+      const tags = Array.isArray(node.tags) ? node.tags : []
+      const title = typeof node.sessionTitle === 'string' ? node.sessionTitle : ''
+      return tags.length === 0 && title === ''
+    }
+
+    /**
      * Name of a node in the 3D view (CONTRACT 7.5): semantic uses its label;
      * an episode uses "short task · turn" when it has a task title, otherwise
      * the first tag / label / excerpt prefix. Always capped at 16 characters.
@@ -1473,6 +1492,10 @@ window.__ModuleLoader__.load({
     function nodeDisplayName(node, t) {
       if (!isObject(node)) return '·'
       if (node.kind === 'semantic') return truncateDisplayName(node.label, LABEL_MAX_CHARS) || '·'
+      if (isTombstoneNode(node)) {
+        const label = typeof t === 'function' ? t('tombstone.label') : '已遗忘'
+        return truncateDisplayName(label, LABEL_MAX_CHARS) || '·'
+      }
       const title = typeof node.sessionTitle === 'string' ? node.sessionTitle.trim() : ''
       if (title !== '') {
         const turn = Math.max(0, Math.round(num(node.turn, 0)))
@@ -2459,6 +2482,7 @@ window.__ModuleLoader__.load({
       const [tagDraft, setTagDraft] = React.useState('')
       const busy = pending !== null
       const now = data.now
+      const tombstone = isTombstoneNode(node)
       const retention = projected.has(node.id) ? projected.get(node.id) : node.retention
       const tone = node.pinned ? 'pinned' : node.state
       const stateLabel = node.pinned ? t('state.pinned') : t(`state.${node.state}`)
@@ -2483,13 +2507,13 @@ window.__ModuleLoader__.load({
       ]
       return h('section', { className: 'dsh-memory-brain-section' },
         h('div', { className: 'dsh-memory-brain-detailHead' },
-          h('h2', { className: 'dsh-memory-brain-detailTitle' }, `${node.label || '·'}`),
+          h('h2', { className: 'dsh-memory-brain-detailTitle' }, tombstone ? t('tombstone.label') : `${node.label || '·'}`),
           h('span', { className: 'dsh-memory-brain-badge', 'data-tone': tone }, stateLabel)),
         node.kind === 'semantic'
           ? h('p', { className: 'dsh-memory-brain-hint' }, t('detail.semanticNote', { count: node.memberIds.length }))
           : null,
         h('h3', { className: 'dsh-memory-brain-subSectionTitle' }, t('detail.excerpt')),
-        h('div', { className: 'dsh-memory-brain-excerpt' }, node.excerpt || '—'),
+        h('div', { className: 'dsh-memory-brain-excerpt' }, tombstone ? t('detail.tombstone') : (node.excerpt || '—')),
         h('h3', { className: 'dsh-memory-brain-subSectionTitle' }, t('detail.meta')),
         h('div', { className: 'dsh-memory-brain-metaList' }, metaRows.map((row) => h(React.Fragment, { key: row[0] },
           h('span', { className: 'dsh-memory-brain-metaKey' }, row[0]),
@@ -2531,39 +2555,45 @@ window.__ModuleLoader__.load({
         h(RetentionCurve, { node, now, travelDays, t }),
         h('h3', { className: 'dsh-memory-brain-subSectionTitle' }, t('detail.ops')),
         h('div', { className: 'dsh-memory-brain-ops' },
-          h('button', {
-            type: 'button',
-            className: 'dsh-memory-brain-btn dsh-memory-brain-btn-secondary dsh-memory-brain-btn-small',
-            disabled: busy,
-            onClick: () => {
-              void actions.rehearse(node.id)
-            },
-          }, pending === 'rehearse' ? t('detail.rehearsing') : t('detail.rehearse')),
-          h('button', {
-            type: 'button',
-            className: 'dsh-memory-brain-btn dsh-memory-brain-btn-secondary dsh-memory-brain-btn-small',
-            disabled: busy,
-            onClick: () => {
-              void actions.pin(node.id, !node.pinned)
-            },
-          }, node.pinned ? t('detail.unpin') : t('detail.pin')),
-          node.state === 'forgotten'
-            ? h('button', {
-              type: 'button',
-              className: 'dsh-memory-brain-btn dsh-memory-brain-btn-secondary dsh-memory-brain-btn-small',
-              disabled: busy,
-              onClick: () => {
-                void actions.restore(node.id)
-              },
-            }, pending === 'restore' ? t('detail.restoring') : t('detail.restore'))
+          tombstone
+            ? null
             : h('button', {
               type: 'button',
               className: 'dsh-memory-brain-btn dsh-memory-brain-btn-secondary dsh-memory-brain-btn-small',
               disabled: busy,
               onClick: () => {
-                void actions.forget(node.id)
+                void actions.rehearse(node.id)
               },
-            }, pending === 'forget' ? t('detail.forgetting') : t('detail.forget')),
+            }, pending === 'rehearse' ? t('detail.rehearsing') : t('detail.rehearse')),
+          tombstone
+            ? null
+            : h('button', {
+              type: 'button',
+              className: 'dsh-memory-brain-btn dsh-memory-brain-btn-secondary dsh-memory-brain-btn-small',
+              disabled: busy,
+              onClick: () => {
+                void actions.pin(node.id, !node.pinned)
+              },
+            }, node.pinned ? t('detail.unpin') : t('detail.pin')),
+          tombstone
+            ? null
+            : (node.state === 'forgotten'
+              ? h('button', {
+                type: 'button',
+                className: 'dsh-memory-brain-btn dsh-memory-brain-btn-secondary dsh-memory-brain-btn-small',
+                disabled: busy,
+                onClick: () => {
+                  void actions.restore(node.id)
+                },
+              }, pending === 'restore' ? t('detail.restoring') : t('detail.restore'))
+              : h('button', {
+                type: 'button',
+                className: 'dsh-memory-brain-btn dsh-memory-brain-btn-secondary dsh-memory-brain-btn-small',
+                disabled: busy,
+                onClick: () => {
+                  void actions.forget(node.id)
+                },
+              }, pending === 'forget' ? t('detail.forgetting') : t('detail.forget'))),
           h(DangerButton, {
             idleLabel: t('detail.hardForget'),
             confirmLabel: t('detail.hardForgetConfirm'),
@@ -3094,14 +3124,16 @@ window.__ModuleLoader__.load({
             role: 'tooltip',
             style: { left: `${Math.round(hoverPosition.x)}px`, top: `${Math.round(hoverPosition.y)}px` },
           },
-          h('div', { className: 'dsh-memory-brain-tooltipTitle' }, hoveredNode.label || '·'),
+          h('div', { className: 'dsh-memory-brain-tooltipTitle' }, isTombstoneNode(hoveredNode) ? t('tombstone.label') : (hoveredNode.label || '·')),
           h('div', { className: 'dsh-memory-brain-tooltipMeta' },
             t('canvas.tooltip.retention', {
               value: Math.round((projected.has(hoveredNode.id) ? projected.get(hoveredNode.id) : hoveredNode.retention) * 100),
             })),
-          hoveredNode.sessionTitle === ''
-            ? null
-            : h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('canvas.tooltip.session', { title: hoveredNode.sessionTitle })),
+          isTombstoneNode(hoveredNode)
+            ? h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('detail.tombstone'))
+            : (hoveredNode.sessionTitle === ''
+              ? null
+              : h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('canvas.tooltip.session', { title: hoveredNode.sessionTitle }))),
           hoveredNode.kind === 'episode'
             ? h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('canvas.tooltip.turn', { turn: Math.round(num(hoveredNode.turn, 0)) }))
             : null))
@@ -3565,14 +3597,16 @@ window.__ModuleLoader__.load({
             role: 'tooltip',
             style: { left: `${Math.round(hoverPosition.x)}px`, top: `${Math.round(hoverPosition.y)}px` },
           },
-          h('div', { className: 'dsh-memory-brain-tooltipTitle' }, hoveredNode.label || '·'),
+          h('div', { className: 'dsh-memory-brain-tooltipTitle' }, isTombstoneNode(hoveredNode) ? t('tombstone.label') : (hoveredNode.label || '·')),
           h('div', { className: 'dsh-memory-brain-tooltipMeta' },
             t('canvas.tooltip.retention', {
               value: Math.round((projected.has(hoveredNode.id) ? projected.get(hoveredNode.id) : hoveredNode.retention) * 100),
             })),
-          hoveredNode.sessionTitle === ''
-            ? null
-            : h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('canvas.tooltip.session', { title: hoveredNode.sessionTitle })),
+          isTombstoneNode(hoveredNode)
+            ? h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('detail.tombstone'))
+            : (hoveredNode.sessionTitle === ''
+              ? null
+              : h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('canvas.tooltip.session', { title: hoveredNode.sessionTitle }))),
           hoveredNode.kind === 'episode'
             ? h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('canvas.tooltip.turn', { turn: Math.round(num(hoveredNode.turn, 0)) }))
             : null))
@@ -3739,21 +3773,22 @@ window.__ModuleLoader__.load({
               h('span', null, String(listNodes.length))),
             h('ul', { className: 'dsh-memory-brain-taskList' }, listNodes.map((node) => {
               const retention = projected.has(node.id) ? projected.get(node.id) : node.retention
-              const tagLabel = Array.isArray(node.tags) && node.tags.length > 0
-                ? node.tags[0]
-                : (node.label || '·')
+              const tombstone = isTombstoneNode(node)
+              const tagLabel = tombstone
+                ? t('tombstone.label')
+                : (Array.isArray(node.tags) && node.tags.length > 0 ? node.tags[0] : (node.label || '·'))
               return h('li', { key: node.id },
                 h('button', {
                   type: 'button',
                   className: 'dsh-memory-brain-taskListItem',
                   'aria-pressed': selectedId === node.id,
-                  title: node.excerpt,
+                  title: node.excerpt || (tombstone ? t('detail.tombstone') : undefined),
                   onClick: () => setSelectedId((current) => (current === node.id ? null : node.id)),
                 },
                   h('span', { className: 'dsh-memory-brain-taskListTurn' }, t('task.turn', { turn: Math.round(num(node.turn, 0)) })),
-                  h('span', { className: 'dsh-memory-brain-taskListLabel' }, `#${tagLabel}`),
+                  h('span', { className: 'dsh-memory-brain-taskListLabel' }, tombstone ? tagLabel : `#${tagLabel}`),
                   h('span', { className: 'dsh-memory-brain-taskListRetention' }, t('task.retention', { value: Math.round(clamp(num(retention, 0), 0, 1) * 100) })),
-                  h('span', { className: 'dsh-memory-brain-taskListExcerpt' }, firstChars(node.excerpt, 40) || '—')))
+                  h('span', { className: 'dsh-memory-brain-taskListExcerpt' }, tombstone ? '—' : (firstChars(node.excerpt, 40) || '—'))))
             }))))
       }
 
