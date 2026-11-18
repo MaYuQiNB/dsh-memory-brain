@@ -189,8 +189,8 @@ window.__ModuleLoader__.load({
       'detail.ops': '操作',
       'detail.rehearse': '唤醒',
       'detail.rehearsing': '唤醒中…',
-      'detail.pin': '置顶',
-      'detail.unpin': '取消置顶',
+      'detail.pin': '永不遗忘',
+      'detail.unpin': '恢复遗忘',
       'detail.forget': '遗忘',
       'detail.forgetting': '遗忘中…',
       'detail.hardForget': '彻底遗忘',
@@ -205,6 +205,9 @@ window.__ModuleLoader__.load({
       'settings.close': '收起',
       'settings.halfLife': '遗忘时间（天）',
       'settings.halfLifeHint': '记忆大约多少天不回忆就会进入遗忘（1–60 天，默认 7）；重要的、常被想起的记忆会更久。',
+      'settings.forgetting': '启用遗忘',
+      'settings.forgettingHint': '关闭后记忆会冻结：停止衰减、不会到点删除内容；重新开启后从冻结时刻继续计算。',
+      'settings.forgettingPaused': '遗忘已暂停：所有记忆保持当前状态，不衰减、不删除。',
       'settings.presets': '快捷选择',
       'settings.daysShort': '{days} 天',
       'settings.maxMemories': '记忆上限',
@@ -346,8 +349,8 @@ window.__ModuleLoader__.load({
       'detail.ops': 'Actions',
       'detail.rehearse': 'Recall',
       'detail.rehearsing': 'Recalling…',
-      'detail.pin': 'Pin',
-      'detail.unpin': 'Unpin',
+      'detail.pin': 'Never forget',
+      'detail.unpin': 'Allow forgetting',
       'detail.forget': 'Forget',
       'detail.forgetting': 'Forgetting…',
       'detail.hardForget': 'Erase permanently',
@@ -362,6 +365,9 @@ window.__ModuleLoader__.load({
       'settings.close': 'Hide',
       'settings.halfLife': 'Forget after (days)',
       'settings.halfLifeHint': 'How many days without recall before a memory is forgotten (1–60, default 7). Important or often-recalled memories last longer.',
+      'settings.forgetting': 'Enable forgetting',
+      'settings.forgettingHint': 'When off, memories freeze: no decay and no deletion at the forgetting time. Re-enabling resumes decay from the frozen moment.',
+      'settings.forgettingPaused': 'Forgetting is paused: all memories keep their current state — no decay, no deletion.',
       'settings.presets': 'Quick presets',
       'settings.daysShort': '{days} d',
       'settings.maxMemories': 'Memory cap',
@@ -870,6 +876,7 @@ window.__ModuleLoader__.load({
       const rawSettings = isObject(raw.settings) ? raw.settings : {}
       const settings = {
         forgetAfterDays: clamp(num(rawSettings.forgetAfterDays, 7), 1, 60),
+        forgettingEnabled: rawSettings.forgettingEnabled !== false,
         halfLifeDays: clamp(num(rawSettings.halfLifeDays, 3), 0.1, 60),
         baseStabilityDays: clamp(num(rawSettings.baseStabilityDays, 1.5), 0.1, 90),
         fadingThreshold: clamp(num(rawSettings.fadingThreshold, 0.35), 0, 1),
@@ -2613,17 +2620,19 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = React.useState(null)
       const [invalid, setInvalid] = React.useState(false)
       const forgetAfterDays = settings === null ? null : settings.forgetAfterDays
+      const forgettingEnabled = settings === null ? null : settings.forgettingEnabled
       const maxMemories = settings === null ? null : settings.maxMemories
       const autoCapture = settings === null ? null : settings.autoCapture
       React.useEffect(() => {
         if (!open || settings === null) return
         setDraft({
           forgetAfterDays: String(settings.forgetAfterDays),
+          forgettingEnabled: settings.forgettingEnabled === true,
           maxMemories: String(settings.maxMemories),
           autoCapture: settings.autoCapture === true,
         })
         setInvalid(false)
-      }, [open, forgetAfterDays, maxMemories, autoCapture])
+      }, [open, forgetAfterDays, forgettingEnabled, maxMemories, autoCapture])
       if (!open) return null
       const save = async () => {
         if (draft === null) return
@@ -2637,6 +2646,7 @@ window.__ModuleLoader__.load({
         setInvalid(false)
         await actions.saveSettings({
           forgetAfterDays: forgetAfterDaysValue,
+          forgettingEnabled: draft.forgettingEnabled === true,
           maxMemories: Math.round(maxMemoriesValue),
           autoCapture: draft.autoCapture === true,
         })
@@ -2652,6 +2662,12 @@ window.__ModuleLoader__.load({
         settings === null || draft === null
           ? h('p', { className: 'dsh-memory-brain-hint' }, t('canvas.loading'))
           : h('div', { className: 'dsh-memory-brain-settingsForm' },
+            h(Toggle, {
+              label: t('settings.forgetting'),
+              checked: draft.forgettingEnabled === true,
+              hint: draft.forgettingEnabled === true ? t('settings.forgettingHint') : t('settings.forgettingPaused'),
+              onChange: (next) => setDraft({ ...draft, forgettingEnabled: next }),
+            }),
             h('label', { className: 'dsh-memory-brain-field' },
               h('span', { className: 'dsh-memory-brain-label' }, t('settings.halfLife')),
               h('input', {
@@ -4409,6 +4425,7 @@ window.__ModuleLoader__.load({
         capture: () => run('capture', ROUTES.capture, {}),
         saveSettings: (partial) => run('settings', ROUTES.settings, {
           forgetAfterDays: partial.forgetAfterDays,
+          forgettingEnabled: partial.forgettingEnabled,
           autoCapture: partial.autoCapture,
           maxMemories: partial.maxMemories,
         }),

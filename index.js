@@ -626,7 +626,7 @@ export function apply(ctx) {
       '- pin：固定/取消固定长期记忆，参数 id、pinned（布尔）。',
       '- sleep：立刻做一次巩固（合并语义记忆 + 清理彻底衰减的记忆）。',
       '- capture：扫描历史任务并补记记忆（首次安装后可用）。',
-      '- settings：手动修改记忆设置——forgetAfterDays（遗忘时间，1–60 天，默认 7）、autoCapture（布尔）、maxMemories（100–2000）、consolidateEveryHours（1–24）。用户说「把遗忘时间改成 X 天」时用它。',
+      '- settings：手动修改记忆设置——forgetAfterDays（遗忘时间，1–60 天，默认 7）、forgettingEnabled（是否启用遗忘，布尔，关掉则记忆冻结、不衰减也不删内容）、autoCapture（布尔）、maxMemories（100–2000）、consolidateEveryHours（1–24）。用户说「把遗忘时间改成 X 天」「关掉遗忘」「开启遗忘」时用它。',
       'QQ 聊天也会被自动捕获：通过 QQ 桥接进行的对话记忆带「QQ」标签（source=qq），可以用 recall 的 tag="QQ" 或 sessionId 检索；它们在记忆网里作为独立的「任务」分组出现。',
       '记忆 id 形如 ep-xxxx，只能从 state/recall 的返回里拿，不要自己编。',
     ].join('\n'),
@@ -648,6 +648,7 @@ export function apply(ctx) {
         hard: { type: 'boolean', description: 'forget：true = 彻底删除，不留幽灵。' },
         pinned: { type: 'boolean', description: 'pin：true 固定为长期记忆，false 取消固定。' },
         forgetAfterDays: { type: 'number', description: 'settings：遗忘时间（天，1–60，默认 7）。' },
+        forgettingEnabled: { type: 'boolean', description: 'settings：是否启用遗忘（false = 记忆冻结、不衰减也不删内容）。' },
         autoCapture: { type: 'boolean', description: 'settings：是否自动捕获新对话。' },
         maxMemories: { type: 'number', description: 'settings：记忆总量上限（100–2000）。' },
         consolidateEveryHours: { type: 'number', description: 'settings：自动巩固间隔（小时，1–24）。' },
@@ -734,16 +735,17 @@ export function apply(ctx) {
           /** @type {Record<string, any>} */
           const patch = {}
           if (args.forgetAfterDays !== undefined) patch.forgetAfterDays = args.forgetAfterDays
+          if (args.forgettingEnabled !== undefined) patch.forgettingEnabled = args.forgettingEnabled
           if (args.autoCapture !== undefined) patch.autoCapture = args.autoCapture
           if (args.maxMemories !== undefined) patch.maxMemories = args.maxMemories
           if (args.consolidateEveryHours !== undefined) patch.consolidateEveryHours = args.consolidateEveryHours
           if (Object.keys(patch).length === 0) {
-            throw new Error('settings：至少给一个要改的字段（forgetAfterDays / autoCapture / maxMemories / consolidateEveryHours）。')
+            throw new Error('settings：至少给一个要改的字段（forgetAfterDays / forgettingEnabled / autoCapture / maxMemories / consolidateEveryHours）。')
           }
           const { state } = await store.commitNow(() => store.updateSettings(patch))
           return {
             ok: true,
-            text: `已手动更新设置：遗忘时间 ${state.settings.forgetAfterDays} 天、自动捕获 ${state.settings.autoCapture ? '开' : '关'}、记忆上限 ${state.settings.maxMemories}。`,
+            text: `已手动更新设置：遗忘${state.settings.forgettingEnabled ? '已开启' : '已暂停'}、遗忘时间 ${state.settings.forgetAfterDays} 天、自动捕获 ${state.settings.autoCapture ? '开' : '关'}、记忆上限 ${state.settings.maxMemories}。`,
             settings: state.settings,
           }
         }
@@ -767,7 +769,7 @@ export function apply(ctx) {
         '一个模仿人脑的长期记忆库已挂载：每个任务里的对话轮次会自动编码成带标签的“情节记忆”，随时间按遗忘曲线衰减、遗忘；重复想起会强化，巩固睡眠会把相似情节合并成“语义记忆”。',
         `当前：${summary.total} 条记忆（活跃 ${summary.active} / 消退 ${summary.fading} / 遗忘 ${summary.forgotten} / 固定 ${summary.pinned}），覆盖 ${summary.sessions} 个任务、${summary.tags} 个标签，平均保持率 ${Math.round((Number(summary.avgRetention) || 0) * 100)}%。`,
         'QQ 桥接的聊天（QQ 好友/群）也会自动进入这个记忆库：记忆带「QQ」标签、归属于独立的 QQ 会话；用户问起 QQ 上聊过的事时，用 brain_memory recall（可加 tag="QQ"）就能想起来。',
-        `当前遗忘时间：${store.publicSettings().forgetAfterDays} 天（用户可在设置面板手动改，或让 agent 调 brain_memory 的 settings 动作改 forgetAfterDays）。到时间后记忆内容会被真正删除，只剩空墓碑。`,
+        `当前遗忘时间：${store.publicSettings().forgetAfterDays} 天，遗忘开关：${store.publicSettings().forgettingEnabled ? '开启' : '暂停（关掉后记忆冻结、不衰减也不删内容）'}（用户可在设置面板手动改，或让 agent 调 brain_memory 的 settings 动作改 forgetAfterDays / forgettingEnabled）。到时间后记忆内容会被真正删除，只剩空墓碑。`,
         '需要回忆旧信息时调用 brain_memory 工具：recall 按关键词/标签检索（检索本身会强化记忆）；state 看统计；remember 主动记住一条重要事实；tag/untag 改标签；rehearse 强化；forget/restore 遗忘或恢复；pin 固定为长期记忆；sleep 做一次巩固；capture 扫描历史会话。',
         '不要在回答里复述这段说明；只在确实需要旧信息时使用工具。',
       ].join('\n')
@@ -853,7 +855,7 @@ function renderStatsText(stats, settings) {
     `覆盖 ${stats.sessions} 个任务、${stats.tags} 个标签，平均保持率 ${Math.round((Number(stats.avgRetention) || 0) * 100)}%。自动捕获：${stats.autoCapture ? '开' : '关'}。`,
   ]
   if (settings !== undefined) {
-    lines.push(`当前设置：遗忘时间 ${settings.forgetAfterDays} 天（可手动改：面板设置，或 brain_memory 的 settings 动作传 forgetAfterDays）。`)
+    lines.push(`当前设置：遗忘${settings.forgettingEnabled ? '开启' : '已暂停'}、遗忘时间 ${settings.forgetAfterDays} 天（可手动改：面板设置，或 brain_memory 的 settings 动作传 forgetAfterDays / forgettingEnabled）。`)
   }
   return lines.join('\n')
 }

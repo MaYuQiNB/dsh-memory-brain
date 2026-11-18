@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Integration tests for the Host half: real `apply()` against a fake Cordis
  * context, exercising live capture, history backfill, every HTTP route, the
  * agent tool and the system-prompt section.
@@ -463,7 +463,11 @@ test('agent tool can manually change the forgetting time', async () => {
     assert.equal(state.settings.forgetAfterDays, 14)
     assert.match(state.text, /遗忘时间 14 天/)
     await assert.rejects(async () => tool.execute({ action: 'settings' }, {}), /至少给一个要改的字段/)
-    await tool.execute({ action: 'settings', forgetAfterDays: 7 }, { agent: { id: 'session-tool' } })
+    const paused = await tool.execute({ action: 'settings', forgettingEnabled: false }, { agent: { id: 'session-tool' } })
+    assert.equal(paused.ok, true)
+    assert.equal(paused.settings.forgettingEnabled, false)
+    const resumed = await tool.execute({ action: 'settings', forgettingEnabled: true, forgetAfterDays: 7 }, { agent: { id: 'session-tool' } })
+    assert.equal(resumed.settings.forgettingEnabled, true)
   } finally {
     await booted.teardown()
   }
