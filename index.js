@@ -517,13 +517,26 @@ export function apply(ctx) {
         return { ok: true, state: store.snapshot(), added }
       }
       case 'settings': {
-        const { state } = await store.commitNow(() => store.updateSettings(body))
+        // Camera controls may travel with the same save; updateSettings ignores
+        // unknown keys, so apply them explicitly in the same commit.
+        const cameraPatch = body.cameraControls !== null && typeof body.cameraControls === 'object' ? body.cameraControls : null
+        const { state } = await store.commitNow(() => {
+          if (cameraPatch !== null) store.updateCameraControls(cameraPatch)
+          return store.updateSettings(body)
+        })
         return { ok: true, state }
       }
       case 'features': {
         const patch = body.features !== null && typeof body.features === 'object' ? body.features : body
         const { state, value } = await store.commitNow(() => store.updateFeatures(patch))
         return { ok: true, state, features: value }
+      }
+      case 'camera': {
+        // Partial camera-control patch; `{ reset: true }` restores the defaults.
+        const reset = body.reset === true
+        const patch = body.cameraControls !== null && typeof body.cameraControls === 'object' ? body.cameraControls : body
+        const { state, value } = await store.commitNow(() => (reset ? store.resetCameraControls() : store.updateCameraControls(patch)))
+        return { ok: true, state, cameraControls: value }
       }
       case 'facts/rebuild': {
         // Full re-extraction over the whole bank (old data included); clears
@@ -572,6 +585,7 @@ export function apply(ctx) {
     { action: 'capture', method: 'POST', suffix: '/capture' },
     { action: 'settings', method: 'POST', suffix: '/settings' },
     { action: 'features', method: 'POST', suffix: '/features' },
+    { action: 'camera', method: 'POST', suffix: '/camera' },
     { action: 'facts/rebuild', method: 'POST', suffix: '/facts/rebuild' },
     { action: 'facts/clear', method: 'POST', suffix: '/facts/clear' },
     { action: 'summaries/rebuild', method: 'POST', suffix: '/summaries/rebuild' },
@@ -656,7 +670,7 @@ export function apply(ctx) {
       '- 分层记忆（可单独开关）：facts 查结构化事实（主体-属性-值，参数 query/subject/includeSuperseded）；summaries 查会话/每日/每周摘要（参数 level=session|daily|weekly|all）；features 看/改 8 个升级开关；rebuild 重建 facts/summaries（参数 target=facts|summaries|all、clear）。',
       '- sleep：立刻做一次巩固（合并语义记忆 + 清理彻底衰减的记忆）。',
       '- capture：扫描历史任务并补记记忆（首次安装后可用）。',
-      '- settings：手动修改记忆设置——forgetAfterDays（遗忘时间，1–60 天，默认 7）、forgettingEnabled（是否启用遗忘，布尔，关掉则记忆冻结、不衰减也不删内容）、autoCapture（布尔）、maxMemories（100–2000）、consolidateEveryHours（1–24）。用户说「把遗忘时间改成 X 天」「关掉遗忘」「开启遗忘」时用它。',
+      '- settings：手动修改记忆设置——forgetAfterDays（遗忘时间，1–60 天，默认 7）、forgettingEnabled（是否启用遗忘，布尔，关掉则记忆冻结、不衰减也不删内容）、autoCapture（布尔）、maxMemories（100–2000）、consolidateEveryHours（1–24）、features（分层记忆 8 个开关）、cameraControls（3D 视角操作：rotateButton/panGesture/rotateSpeed/panSpeed/zoomSpeed/invertY/keyboardLayout/doubleClickReset）。用户说「把遗忘时间改成 X 天」「关掉遗忘」「改鼠标操作」时用它。',
       'QQ 聊天也会被自动捕获：通过 QQ 桥接进行的对话记忆带「QQ」标签（source=qq），可以用 recall 的 tag="QQ" 或 sessionId 检索；它们在记忆网里作为独立的「任务」分组出现。',
       '记忆 id 形如 ep-xxxx，只能从 state/recall 的返回里拿，不要自己编。',
     ].join('\n'),
@@ -684,6 +698,7 @@ export function apply(ctx) {
         target: { type: 'string', enum: ['facts', 'summaries', 'all'], description: 'rebuild：重建哪一层。' },
         clear: { type: 'boolean', description: 'rebuild/features（facts/clear 时省略）：rebuild 前是否清空。' },
         features: { type: 'object', additionalProperties: { type: 'boolean' }, description: 'features/settings：8 个开关的部分更新，例如 {"factExtraction":false}。' },
+        cameraControls: { type: 'object', additionalProperties: true, description: 'settings：3D 视角操作自定义（rotateButton/panGesture/rotateSpeed/panSpeed/zoomSpeed/invertY/keyboardLayout/doubleClickReset）。' },
         forgetAfterDays: { type: 'number', description: 'settings：遗忘时间（天，1–60，默认 7）。' },
         forgettingEnabled: { type: 'boolean', description: 'settings：是否启用遗忘（false = 记忆冻结、不衰减也不删内容）。' },
         autoCapture: { type: 'boolean', description: 'settings：是否自动捕获新对话。' },
@@ -796,32 +811,38 @@ export function apply(ctx) {
           /** @type {Record<string, any>} */
           const patch = {}
           const featurePatch = args.features !== null && typeof args.features === 'object' ? args.features : null
+          const cameraPatch = args.cameraControls !== null && typeof args.cameraControls === 'object' ? args.cameraControls : null
           if (args.forgetAfterDays !== undefined) patch.forgetAfterDays = args.forgetAfterDays
           if (args.forgettingEnabled !== undefined) patch.forgettingEnabled = args.forgettingEnabled
           if (args.autoCapture !== undefined) patch.autoCapture = args.autoCapture
           if (args.maxMemories !== undefined) patch.maxMemories = args.maxMemories
           if (args.consolidateEveryHours !== undefined) patch.consolidateEveryHours = args.consolidateEveryHours
-          if (Object.keys(patch).length === 0 && featurePatch === null) {
-            throw new Error('settings：至少给一个要改的字段（forgetAfterDays / forgettingEnabled / autoCapture / maxMemories / consolidateEveryHours / features）。')
+          if (Object.keys(patch).length === 0 && featurePatch === null && cameraPatch === null) {
+            throw new Error('settings：至少给一个要改的字段（forgetAfterDays / forgettingEnabled / autoCapture / maxMemories / consolidateEveryHours / features / cameraControls）。')
           }
           if (featurePatch !== null) {
             await store.commitNow(() => store.updateFeatures(featurePatch))
+          }
+          if (cameraPatch !== null) {
+            await store.commitNow(() => store.updateCameraControls(cameraPatch))
           }
           if (Object.keys(patch).length > 0) {
             const { state } = await store.commitNow(() => store.updateSettings(patch))
             return {
               ok: true,
-              text: `已手动更新设置：遗忘${state.settings.forgettingEnabled ? '已开启' : '已暂停'}、遗忘时间 ${state.settings.forgetAfterDays} 天、自动捕获 ${state.settings.autoCapture ? '开' : '关'}、记忆上限 ${state.settings.maxMemories}${featurePatch !== null ? '；分层记忆开关已更新' : ''}。`,
+              text: `已手动更新设置：遗忘${state.settings.forgettingEnabled ? '已开启' : '已暂停'}、遗忘时间 ${state.settings.forgetAfterDays} 天、自动捕获 ${state.settings.autoCapture ? '开' : '关'}、记忆上限 ${state.settings.maxMemories}${featurePatch !== null ? '；分层记忆开关已更新' : ''}${cameraPatch !== null ? '；3D 操作已更新' : ''}。`,
               settings: state.settings,
               features: state.features,
+              cameraControls: state.settings.cameraControls,
             }
           }
           const settings = store.publicSettings()
           return {
             ok: true,
-            text: `已更新分层记忆开关：${renderFeaturesText(settings.features)}`,
+            text: `${featurePatch !== null ? `已更新分层记忆开关：${renderFeaturesText(settings.features)}。` : ''}${cameraPatch !== null ? `已更新 3D 操作：${renderCameraControlsText(settings.cameraControls)}。` : ''}`,
             settings,
             features: settings.features,
+            cameraControls: settings.cameraControls,
           }
         }
         case 'features': {
@@ -1002,6 +1023,28 @@ function renderFeaturesText(features) {
     ['temporalHistory', '时序历史'],
   ]
   return labels.map(([key, label]) => `${label}${source[key] === true ? '开' : '关'}`).join('、')
+}
+
+/**
+ * One-line rendering of the customizable 3D camera controls.
+ * @param {Record<string, any> | undefined} controls Camera controls.
+ * @returns {string} Text.
+ */
+function renderCameraControlsText(controls) {
+  const source = controls !== null && typeof controls === 'object' ? controls : {}
+  const rotate = source.rotateButton === 'right' ? '右键' : '左键'
+  const panNames = { right: '右键拖拽', middle: '中键拖拽', 'shift-left': 'Shift+左键', 'alt-left': 'Alt+左键' }
+  const keyboardNames = { wasd: 'WASD', arrows: '方向键', both: 'WASD+方向键', off: '关闭' }
+  return [
+    `旋转 ${rotate}`,
+    `平移 ${panNames[source.panGesture] ?? '右键拖拽'}`,
+    `旋转灵敏度 ${Number(source.rotateSpeed ?? 1)}`,
+    `平移灵敏度 ${Number(source.panSpeed ?? 1)}`,
+    `缩放灵敏度 ${Number(source.zoomSpeed ?? 1)}`,
+    `上下反转 ${source.invertY === true ? '开' : '关'}`,
+    `键盘 ${keyboardNames[source.keyboardLayout] ?? 'WASD+方向键'}`,
+    `双击归位 ${source.doubleClickReset === false ? '关' : '开'}`,
+  ].join(' · ')
 }
 
 /**

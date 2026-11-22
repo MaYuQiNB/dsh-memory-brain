@@ -575,3 +575,32 @@ test('agent tool exposes layered-memory actions', async () => {
     await booted.teardown()
   }
 })
+
+test('camera controls route and settings payload customise the 3D operations', async () => {
+  const booted = await boot()
+  try {
+    const route = await callRoute(booted.routes, '/memory-brain/camera', { method: 'POST', body: { rotateButton: 'right', panGesture: 'alt-left', zoomSpeed: 2 } })
+    assert.equal(route.status, 200)
+    assert.equal(route.body.ok, true)
+    assert.equal(route.body.cameraControls.rotateButton, 'right')
+    assert.equal(route.body.cameraControls.zoomSpeed, 2)
+    assert.equal(route.body.state.settings.cameraControls.panGesture, 'alt-left')
+
+    const settingsSave = await callRoute(booted.routes, '/memory-brain/settings', { method: 'POST', body: { cameraControls: { keyboardLayout: 'wasd' } } })
+    assert.equal(settingsSave.status, 200)
+    assert.equal(settingsSave.body.state.settings.cameraControls.keyboardLayout, 'wasd')
+
+    const reset = await callRoute(booted.routes, '/memory-brain/camera', { method: 'POST', body: { reset: true } })
+    assert.equal(reset.status, 200)
+    assert.equal(reset.body.cameraControls.keyboardLayout, 'both')
+    assert.equal(reset.body.cameraControls.rotateButton, 'left')
+
+    const tool = booted.tools.get('brain_memory')
+    const toolUpdated = await tool.execute({ action: 'settings', cameraControls: { invertY: true, rotateSpeed: 1.5 } }, { agent: { id: 'session-tool' } })
+    assert.equal(toolUpdated.ok, true)
+    assert.equal(toolUpdated.cameraControls.invertY, true)
+    assert.equal(toolUpdated.cameraControls.rotateSpeed, 1.5)
+  } finally {
+    await booted.teardown()
+  }
+})

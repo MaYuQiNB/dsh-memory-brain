@@ -671,3 +671,41 @@ test('facts, summaries and feature toggles survive persistence reload', async ()
   assert.ok(reloaded.listFacts({ limit: 20 }).length >= 1)
   assert.ok(reloaded.summaries.sessions.length >= 1)
 })
+
+test('camera controls are customizable, validated and persisted', async () => {
+  const { store, writes } = makeStore()
+  assert.deepEqual(store.publicSettings().cameraControls, {
+    rotateButton: 'left',
+    panGesture: 'right',
+    rotateSpeed: 1,
+    panSpeed: 1,
+    zoomSpeed: 1,
+    invertY: false,
+    keyboardLayout: 'both',
+    doubleClickReset: true,
+  })
+  const updated = store.updateCameraControls({ rotateButton: 'right', panGesture: 'middle', rotateSpeed: 9, panSpeed: 0.1, invertY: true, keyboardLayout: 'wasd' })
+  assert.equal(updated.rotateButton, 'right')
+  assert.equal(updated.panGesture, 'middle')
+  assert.equal(updated.rotateSpeed, 3, 'rotate speed is clamped to 3')
+  assert.equal(updated.panSpeed, 0.2, 'pan speed is clamped to 0.2')
+  assert.equal(updated.invertY, true)
+  assert.equal(updated.keyboardLayout, 'wasd')
+
+  const fallback = store.updateCameraControls({ panGesture: 'bogus', keyboardLayout: 'bogus' })
+  assert.equal(fallback.panGesture, 'middle', 'unknown gesture keeps the previous value')
+  assert.equal(fallback.keyboardLayout, 'wasd')
+
+  await store.flush()
+  const payload = writes.at(-1)
+  assert.equal(payload.cameraControls.rotateButton, 'right')
+  const reloaded = new MemoryStore({ now: () => START })
+  reloaded.load(payload)
+  assert.equal(reloaded.publicSettings().cameraControls.rotateButton, 'right')
+  assert.equal(reloaded.publicSettings().cameraControls.panSpeed, 0.2)
+
+  const reset = store.resetCameraControls()
+  assert.equal(reset.rotateButton, 'left')
+  assert.equal(reset.rotateSpeed, 1)
+  assert.equal(reset.invertY, false)
+})

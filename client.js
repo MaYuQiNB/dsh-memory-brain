@@ -48,6 +48,7 @@ window.__ModuleLoader__.load({
       capture: '/memory-brain/capture',
       settings: '/memory-brain/settings',
       features: '/memory-brain/features',
+      camera: '/memory-brain/camera',
       factsRebuild: '/memory-brain/facts/rebuild',
       factsClear: '/memory-brain/facts/clear',
       summariesRebuild: '/memory-brain/summaries/rebuild',
@@ -74,6 +75,45 @@ window.__ModuleLoader__.load({
       { batch: 2, titleKey: 'settings.batch2', items: ['sessionSummary', 'dailyWeeklySummary', 'layeredRecall'] },
       { batch: 3, titleKey: 'settings.batch3', items: ['semanticRecall', 'temporalHistory'] },
     ]
+
+    /** Default 3D camera controls; mirrors the Host defaults (CONTRACT 二十一). */
+    const DEFAULT_CAMERA_CONTROLS = {
+      rotateButton: 'left',
+      panGesture: 'right',
+      rotateSpeed: 1,
+      panSpeed: 1,
+      zoomSpeed: 1,
+      invertY: false,
+      keyboardLayout: 'both',
+      doubleClickReset: true,
+    }
+    const CAMERA_ENUMS = {
+      rotateButton: ['left', 'right'],
+      panGesture: ['right', 'middle', 'shift-left', 'alt-left'],
+      keyboardLayout: ['wasd', 'arrows', 'both', 'off'],
+    }
+    const CAMERA_SPEED_MIN = 0.2
+    const CAMERA_SPEED_MAX = 3
+
+    /**
+     * Canonicalize camera controls from a state payload (old hosts omit them).
+     * @param {unknown} raw Raw controls.
+     * @returns {Record<string, any>} Effective controls.
+     */
+    function normalizeCameraControls(raw) {
+      const source = isObject(raw) ? raw : {}
+      const controls = { ...DEFAULT_CAMERA_CONTROLS }
+      for (const key of Object.keys(CAMERA_ENUMS)) {
+        if (typeof source[key] === 'string' && CAMERA_ENUMS[key].includes(source[key])) controls[key] = source[key]
+      }
+      for (const key of ['rotateSpeed', 'panSpeed', 'zoomSpeed']) {
+        const value = Number(source[key])
+        if (Number.isFinite(value)) controls[key] = clamp(value, CAMERA_SPEED_MIN, CAMERA_SPEED_MAX)
+      }
+      if (source.invertY !== undefined) controls.invertY = source.invertY === true
+      if (source.doubleClickReset !== undefined) controls.doubleClickReset = source.doubleClickReset !== false
+      return controls
+    }
 
     // Canvas layout / simulation constants, in world (layout) units.
     const SEED_RADIUS = 440
@@ -229,6 +269,29 @@ window.__ModuleLoader__.load({
       'settings.close': '收起',
       'settings.halfLife': '遗忘时间（天）',
       'settings.halfLifeHint': '记忆大约多少天不回忆就会进入遗忘（1–60 天，默认 7）；重要的、常被想起的记忆会更久。',
+      'settings.cameraTitle': '3D 视角操作（可自定义）',
+      'settings.cameraHint': '改完点保存生效；也可以直接对我说「把 3D 旋转改成右键」「平移换成中键」等。',
+      'settings.cameraRotate': '旋转键',
+      'settings.cameraRotateLeft': '左键拖拽',
+      'settings.cameraRotateRight': '右键拖拽',
+      'settings.cameraPan': '平移手势',
+      'settings.cameraPanRight': '右键拖拽',
+      'settings.cameraPanMiddle': '中键拖拽',
+      'settings.cameraPanShift': 'Shift + 左键',
+      'settings.cameraPanAlt': 'Alt + 左键',
+      'settings.cameraRotateSpeed': '旋转灵敏度（0.2–3）',
+      'settings.cameraPanSpeed': '平移灵敏度（0.2–3）',
+      'settings.cameraZoomSpeed': '缩放灵敏度（0.2–3）',
+      'settings.cameraInvertY': '反转上下',
+      'settings.cameraInvertYHint': '打开后上下拖拽的旋转方向反过来。',
+      'settings.cameraKeyboard': '键盘布局',
+      'settings.cameraKeyboardBoth': 'WASD + 方向键',
+      'settings.cameraKeyboardWasd': '仅 WASD',
+      'settings.cameraKeyboardArrows': '仅方向键',
+      'settings.cameraKeyboardOff': '关闭键盘',
+      'settings.cameraDoubleReset': '双击画布归位',
+      'settings.cameraDoubleResetHint': '双击画布恢复默认视角（R / 0 始终可用）。',
+      'settings.cameraReset': '恢复默认操作',
       'settings.forgetting': '启用遗忘',
       'settings.forgettingHint': '关闭后记忆会冻结：停止衰减、不会到点删除内容；重新开启后从冻结时刻继续计算。',
       'settings.forgettingPaused': '遗忘已暂停：所有记忆保持当前状态，不衰减、不删除。',
@@ -435,6 +498,29 @@ window.__ModuleLoader__.load({
       'settings.close': 'Hide',
       'settings.halfLife': 'Forget after (days)',
       'settings.halfLifeHint': 'How many days without recall before a memory is forgotten (1–60, default 7). Important or often-recalled memories last longer.',
+      'settings.cameraTitle': '3D camera controls (customizable)',
+      'settings.cameraHint': 'Save to apply. You can also just tell me "use the right mouse button to rotate" or "pan with the middle button".',
+      'settings.cameraRotate': 'Rotate button',
+      'settings.cameraRotateLeft': 'Left drag',
+      'settings.cameraRotateRight': 'Right drag',
+      'settings.cameraPan': 'Pan gesture',
+      'settings.cameraPanRight': 'Right drag',
+      'settings.cameraPanMiddle': 'Middle drag',
+      'settings.cameraPanShift': 'Shift + left drag',
+      'settings.cameraPanAlt': 'Alt + left drag',
+      'settings.cameraRotateSpeed': 'Rotate sensitivity (0.2–3)',
+      'settings.cameraPanSpeed': 'Pan sensitivity (0.2–3)',
+      'settings.cameraZoomSpeed': 'Zoom sensitivity (0.2–3)',
+      'settings.cameraInvertY': 'Invert vertical',
+      'settings.cameraInvertYHint': 'Reverse the vertical rotation direction while dragging.',
+      'settings.cameraKeyboard': 'Keyboard layout',
+      'settings.cameraKeyboardBoth': 'WASD + arrow keys',
+      'settings.cameraKeyboardWasd': 'WASD only',
+      'settings.cameraKeyboardArrows': 'Arrow keys only',
+      'settings.cameraKeyboardOff': 'Keyboard off',
+      'settings.cameraDoubleReset': 'Double-click to refit',
+      'settings.cameraDoubleResetHint': 'Double-click the canvas to restore the default view (R / 0 always work).',
+      'settings.cameraReset': 'Restore default controls',
       'settings.forgetting': 'Enable forgetting',
       'settings.forgettingHint': 'When off, memories freeze: no decay and no deletion at the forgetting time. Re-enabling resumes decay from the frozen moment.',
       'settings.forgettingPaused': 'Forgetting is paused: all memories keep their current state — no decay, no deletion.',
@@ -548,6 +634,7 @@ window.__ModuleLoader__.load({
 .dsh-memory-brain-hint{margin:6px 0 0;font-size:11px;line-height:17px;color:var(--dsw-alias-label-caption)}
 .dsh-memory-brain-errorText{margin:6px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary);overflow-wrap:anywhere}
 .dsh-memory-brain-search,.dsh-memory-brain-input{box-sizing:border-box;width:100%;height:30px;padding:4px 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px;outline:none}
+.dsh-memory-brain-select{box-sizing:border-box;width:100%;height:30px;padding:0 8px;border:.5px solid var(--dsw-alias-border-l3);border-radius:8px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:28px}
 .dsh-memory-brain-search::placeholder,.dsh-memory-brain-input::placeholder{color:var(--dsw-alias-label-caption)}
 .dsh-memory-brain-search:focus,.dsh-memory-brain-input:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary)}
 .dsh-memory-brain-switchRow{display:flex;align-items:center;gap:8px;box-sizing:border-box;width:100%;margin:8px 0 0;padding:2px 0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;line-height:20px;text-align:left;cursor:pointer;appearance:none}
@@ -1149,6 +1236,7 @@ window.__ModuleLoader__.load({
         autoCapture: rawSettings.autoCapture !== false,
         maxMemories: clamp(num(rawSettings.maxMemories, 600), 10, 5000),
         consolidateEveryHours: clamp(num(rawSettings.consolidateEveryHours, 6), 1, 168),
+        cameraControls: normalizeCameraControls(rawSettings.cameraControls),
       }
       const rawStats = isObject(raw.stats) ? raw.stats : {}
       const stats = {
@@ -2970,6 +3058,9 @@ window.__ModuleLoader__.load({
       for (const key of FEATURE_KEYS) {
         featureSignature += features !== null && isObject(features) && features[key] === true ? '1' : '0'
       }
+      // Camera controls are an object re-created by every poll; signature it so
+      // the draft is not reset while the user edits other fields.
+      const cameraSignature = JSON.stringify(normalizeCameraControls(settings === null ? null : settings.cameraControls))
       React.useEffect(() => {
         if (!open || settings === null) return
         const nextFeatures = {}
@@ -2984,9 +3075,10 @@ window.__ModuleLoader__.load({
           maxMemories: String(settings.maxMemories),
           autoCapture: settings.autoCapture === true,
           features: nextFeatures,
+          cameraControls: normalizeCameraControls(settings.cameraControls),
         })
         setInvalid(false)
-      }, [open, forgetAfterDays, forgettingEnabled, maxMemories, autoCapture, featureSignature])
+      }, [open, forgetAfterDays, forgettingEnabled, maxMemories, autoCapture, featureSignature, cameraSignature])
       if (!open) return null
       const factsActive = factsStats === null || !isObject(factsStats) ? 0 : Math.round(num(factsStats.active, 0))
       const factsTotal = factsStats === null || !isObject(factsStats) ? 0 : Math.round(num(factsStats.total, 0))
@@ -2994,6 +3086,13 @@ window.__ModuleLoader__.load({
       const summarySessions = summaryStats === null || !isObject(summaryStats) ? 0 : Math.round(num(summaryStats.sessions, 0))
       const summaryDaily = summaryStats === null || !isObject(summaryStats) ? 0 : Math.round(num(summaryStats.daily, 0))
       const summaryWeekly = summaryStats === null || !isObject(summaryStats) ? 0 : Math.round(num(summaryStats.weekly, 0))
+      const cameraDraft = draft === null || draft.cameraControls === null || draft.cameraControls === undefined
+        ? { ...DEFAULT_CAMERA_CONTROLS }
+        : draft.cameraControls
+      const setCamera = (patch) => {
+        if (draft === null) return
+        setDraft({ ...draft, cameraControls: { ...cameraDraft, ...patch } })
+      }
       const save = async () => {
         if (draft === null) return
         const forgetAfterDaysValue = Number(draft.forgetAfterDays)
@@ -3010,6 +3109,9 @@ window.__ModuleLoader__.load({
           maxMemories: Math.round(maxMemoriesValue),
           autoCapture: draft.autoCapture === true,
           features: draft.features === null || draft.features === undefined ? undefined : { ...draft.features },
+          cameraControls: draft.cameraControls === null || draft.cameraControls === undefined
+            ? undefined
+            : normalizeCameraControls(draft.cameraControls),
         })
       }
       return h('section', { className: 'dsh-memory-brain-section' },
@@ -3068,6 +3170,96 @@ window.__ModuleLoader__.load({
               hint: t('settings.autoCaptureHint'),
               onChange: (next) => setDraft({ ...draft, autoCapture: next }),
             }),
+            h('div', { className: 'dsh-memory-brain-upgradeBlock' },
+              h('h3', { className: 'dsh-memory-brain-upgradeTitle' }, t('settings.cameraTitle')),
+              h('p', { className: 'dsh-memory-brain-hint' }, t('settings.cameraHint')),
+              h('label', { className: 'dsh-memory-brain-field' },
+                h('span', { className: 'dsh-memory-brain-label' }, t('settings.cameraRotate')),
+                h('select', {
+                  className: 'dsh-memory-brain-select',
+                  value: cameraDraft.rotateButton,
+                  'aria-label': t('settings.cameraRotate'),
+                  onChange: (event) => setCamera({ rotateButton: event.target.value }),
+                },
+                h('option', { value: 'left' }, t('settings.cameraRotateLeft')),
+                h('option', { value: 'right' }, t('settings.cameraRotateRight')))),
+              h('label', { className: 'dsh-memory-brain-field' },
+                h('span', { className: 'dsh-memory-brain-label' }, t('settings.cameraPan')),
+                h('select', {
+                  className: 'dsh-memory-brain-select',
+                  value: cameraDraft.panGesture,
+                  'aria-label': t('settings.cameraPan'),
+                  onChange: (event) => setCamera({ panGesture: event.target.value }),
+                },
+                h('option', { value: 'right' }, t('settings.cameraPanRight')),
+                h('option', { value: 'middle' }, t('settings.cameraPanMiddle')),
+                h('option', { value: 'shift-left' }, t('settings.cameraPanShift')),
+                h('option', { value: 'alt-left' }, t('settings.cameraPanAlt')))),
+              h('label', { className: 'dsh-memory-brain-field' },
+                h('span', { className: 'dsh-memory-brain-label' }, t('settings.cameraRotateSpeed')),
+                h('input', {
+                  className: 'dsh-memory-brain-input',
+                  type: 'number',
+                  min: CAMERA_SPEED_MIN,
+                  max: CAMERA_SPEED_MAX,
+                  step: 0.1,
+                  value: String(cameraDraft.rotateSpeed),
+                  'aria-label': t('settings.cameraRotateSpeed'),
+                  onChange: (event) => setCamera({ rotateSpeed: Number(event.target.value) }),
+                })),
+              h('label', { className: 'dsh-memory-brain-field' },
+                h('span', { className: 'dsh-memory-brain-label' }, t('settings.cameraPanSpeed')),
+                h('input', {
+                  className: 'dsh-memory-brain-input',
+                  type: 'number',
+                  min: CAMERA_SPEED_MIN,
+                  max: CAMERA_SPEED_MAX,
+                  step: 0.1,
+                  value: String(cameraDraft.panSpeed),
+                  'aria-label': t('settings.cameraPanSpeed'),
+                  onChange: (event) => setCamera({ panSpeed: Number(event.target.value) }),
+                })),
+              h('label', { className: 'dsh-memory-brain-field' },
+                h('span', { className: 'dsh-memory-brain-label' }, t('settings.cameraZoomSpeed')),
+                h('input', {
+                  className: 'dsh-memory-brain-input',
+                  type: 'number',
+                  min: CAMERA_SPEED_MIN,
+                  max: CAMERA_SPEED_MAX,
+                  step: 0.1,
+                  value: String(cameraDraft.zoomSpeed),
+                  'aria-label': t('settings.cameraZoomSpeed'),
+                  onChange: (event) => setCamera({ zoomSpeed: Number(event.target.value) }),
+                })),
+              h(Toggle, {
+                label: t('settings.cameraInvertY'),
+                checked: cameraDraft.invertY === true,
+                hint: t('settings.cameraInvertYHint'),
+                onChange: (next) => setCamera({ invertY: next }),
+              }),
+              h('label', { className: 'dsh-memory-brain-field' },
+                h('span', { className: 'dsh-memory-brain-label' }, t('settings.cameraKeyboard')),
+                h('select', {
+                  className: 'dsh-memory-brain-select',
+                  value: cameraDraft.keyboardLayout,
+                  'aria-label': t('settings.cameraKeyboard'),
+                  onChange: (event) => setCamera({ keyboardLayout: event.target.value }),
+                },
+                h('option', { value: 'both' }, t('settings.cameraKeyboardBoth')),
+                h('option', { value: 'wasd' }, t('settings.cameraKeyboardWasd')),
+                h('option', { value: 'arrows' }, t('settings.cameraKeyboardArrows')),
+                h('option', { value: 'off' }, t('settings.cameraKeyboardOff')))),
+              h(Toggle, {
+                label: t('settings.cameraDoubleReset'),
+                checked: cameraDraft.doubleClickReset !== false,
+                hint: t('settings.cameraDoubleResetHint'),
+                onChange: (next) => setCamera({ doubleClickReset: next }),
+              }),
+              h('button', {
+                type: 'button',
+                className: 'dsh-memory-brain-btn dsh-memory-brain-btn-secondary dsh-memory-brain-btn-small',
+                onClick: () => setDraft({ ...draft, cameraControls: { ...DEFAULT_CAMERA_CONTROLS } }),
+              }, t('settings.cameraReset'))),
             h('div', { className: 'dsh-memory-brain-upgradeBlock' },
               h('h3', { className: 'dsh-memory-brain-upgradeTitle' }, t('settings.upgradeTitle')),
               h('p', { className: 'dsh-memory-brain-hint' }, t('settings.upgradeHint')),
@@ -3698,6 +3890,13 @@ window.__ModuleLoader__.load({
       propsRef.current = { data, projected, selectedId, filters, t }
       sizeRef.current = size
 
+      /** Current user-customized camera controls (safe with old host payloads). */
+      const cameraControls = () => {
+        const currentData = propsRef.current === null ? null : propsRef.current.data
+        const settings = isObject(currentData) && isObject(currentData.settings) ? currentData.settings : null
+        return normalizeCameraControls(settings === null ? null : settings.cameraControls)
+      }
+
       const stopLoop = React.useCallback(() => {
         if (rafRef.current !== 0) {
           window.cancelAnimationFrame(rafRef.current)
@@ -3924,8 +4123,9 @@ window.__ModuleLoader__.load({
         const onWheel = (event) => {
           event.preventDefault()
           const camera = cameraRef.current
+          const controls = cameraControls()
           camera.pauseUntil = Math.max(camera.pauseUntil, Date.now() + INTERACTION_PAUSE_MS)
-          camera.distance = clamp(camera.distance * Math.exp(event.deltaY * 0.001), DISTANCE_MIN, DISTANCE_MAX)
+          camera.distance = clamp(camera.distance * Math.exp(event.deltaY * 0.001 * controls.zoomSpeed), DISTANCE_MIN, DISTANCE_MAX)
           draw()
         }
         wrap.addEventListener('wheel', onWheel, { passive: false })
@@ -3967,10 +4167,17 @@ window.__ModuleLoader__.load({
         const wrap = wrapRef.current
         if (position === null || wrap === null) return
         pauseAutoRotate()
-        // Middle/right button and Shift+drag pan the camera instead of orbiting;
-        // this lets the user move the viewpoint (not just rotate around origin).
-        const panMode = event.button === 1 || event.button === 2 || event.shiftKey === true
-        const hitId = panMode ? null : hitTest(position.x, position.y)
+        // User-customizable bindings (CONTRACT 二十一): rotate button and pan
+        // gesture are configurable; pan wins when both target the same input.
+        const controls = cameraControls()
+        let panMode = false
+        if (controls.panGesture === 'right') panMode = event.button === 2
+        else if (controls.panGesture === 'middle') panMode = event.button === 1
+        else if (controls.panGesture === 'shift-left') panMode = event.button === 0 && event.shiftKey === true
+        else if (controls.panGesture === 'alt-left') panMode = event.button === 0 && event.altKey === true
+        const rotateMode = !panMode && event.button === (controls.rotateButton === 'right' ? 2 : 0)
+        if (!panMode && !rotateMode) return
+        const hitId = rotateMode ? hitTest(position.x, position.y) : null
         interactionRef.current = {
           kind: panMode ? 'pan' : (hitId === null ? 'rotate' : 'node'),
           id: hitId,
@@ -4018,15 +4225,18 @@ window.__ModuleLoader__.load({
           interaction.lastY = position.y
           if (Math.abs(position.x - interaction.startX) + Math.abs(position.y - interaction.startY) > 3) interaction.moved = true
           if (interaction.kind === 'pan') {
-            panCamera(camera, deltaX, deltaY, current.width, current.height)
+            const panControls = cameraControls()
+            panCamera(camera, deltaX * panControls.panSpeed, deltaY * panControls.panSpeed, current.width, current.height)
             pauseAutoRotate()
             draw()
             return
           }
           if (interaction.kind === 'rotate') {
-            // CONTRACT 7.4: yaw += dx*0.006, pitch -= dy*0.006, clamped.
-            camera.yaw += deltaX * 0.006
-            camera.pitch = clamp(camera.pitch - deltaY * 0.006, -PITCH_LIMIT, PITCH_LIMIT)
+            const rotateControls = cameraControls()
+            const rotateScale = 0.006 * rotateControls.rotateSpeed
+            camera.yaw += deltaX * rotateScale
+            const pitchDelta = deltaY * rotateScale * (rotateControls.invertY === true ? 1 : -1)
+            camera.pitch = clamp(camera.pitch + pitchDelta, -PITCH_LIMIT, PITCH_LIMIT)
             pauseAutoRotate()
             draw()
             return
@@ -4113,15 +4323,19 @@ window.__ModuleLoader__.load({
         const camera = cameraRef.current
         const current = sizeRef.current
         if (!(current.width > 0) || !(current.height > 0)) return
+        const controls = cameraControls()
+        if (controls.keyboardLayout === 'off') return
+        const useWasd = controls.keyboardLayout === 'wasd' || controls.keyboardLayout === 'both'
+        const useArrows = controls.keyboardLayout === 'arrows' || controls.keyboardLayout === 'both'
         const key = event.key
         let handled = true
-        if (key === 'ArrowLeft' || key === 'a' || key === 'A') {
+        if ((key === 'ArrowLeft' && useArrows) || ((key === 'a' || key === 'A') && useWasd)) {
           panCamera(camera, -KEY_PAN_PIXELS, 0, current.width, current.height)
-        } else if (key === 'ArrowRight' || key === 'd' || key === 'D') {
+        } else if ((key === 'ArrowRight' && useArrows) || ((key === 'd' || key === 'D') && useWasd)) {
           panCamera(camera, KEY_PAN_PIXELS, 0, current.width, current.height)
-        } else if (key === 'ArrowUp' || key === 'w' || key === 'W') {
+        } else if ((key === 'ArrowUp' && useArrows) || ((key === 'w' || key === 'W') && useWasd)) {
           panCamera(camera, 0, -KEY_PAN_PIXELS, current.width, current.height)
-        } else if (key === 'ArrowDown' || key === 's' || key === 'S') {
+        } else if ((key === 'ArrowDown' && useArrows) || ((key === 's' || key === 'S') && useWasd)) {
           panCamera(camera, 0, KEY_PAN_PIXELS, current.width, current.height)
         } else if (key === 'q' || key === 'Q') {
           camera.yaw -= KEY_YAW_STEP
@@ -4163,6 +4377,7 @@ window.__ModuleLoader__.load({
         onPointerLeave,
         onContextMenu: (event) => event.preventDefault(),
         onDoubleClick: () => {
+          if (cameraControls().doubleClickReset === false) return
           resetCamera3d(cameraRef.current, positionsRef.current)
           draw()
         },
@@ -5004,6 +5219,8 @@ window.__ModuleLoader__.load({
           maxMemories: partial.maxMemories,
           // The upgrade switches travel with the settings save (still one POST).
           features: isObject(partial.features) ? partial.features : undefined,
+          // 3D camera controls travel with the same save too.
+          cameraControls: isObject(partial.cameraControls) ? partial.cameraControls : undefined,
         }),
         rebuildFacts: () => run('rebuildFacts', ROUTES.factsRebuild, {}),
         clearFacts: () => run('clearFacts', ROUTES.factsClear, {}),
