@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Integration tests for the Host half: real `apply()` against a fake Cordis
  * context, exercising live capture, history backfill, every HTTP route, the
  * agent tool and the system-prompt section.
@@ -230,7 +230,7 @@ test('boots, captures a live turn and serves GET /memory-brain/state', async () 
     assert.equal(response.status, 200)
     assert.equal(response.body.ok, true)
     const state = response.body.state
-    assert.equal(state.version, 1)
+    assert.equal(state.version, 2)
     assert.equal(state.stats.total, 1)
     assert.equal(state.nodes.length, 1)
     assert.equal(state.nodes[0].state, 'active')
@@ -468,6 +468,103 @@ test('agent tool can manually change the forgetting time', async () => {
     assert.equal(paused.settings.forgettingEnabled, false)
     const resumed = await tool.execute({ action: 'settings', forgettingEnabled: true, forgetAfterDays: 7 }, { agent: { id: 'session-tool' } })
     assert.equal(resumed.settings.forgettingEnabled, true)
+  } finally {
+    await booted.teardown()
+  }
+})
+
+test('layered-memory routes: features toggle, fact/summary rebuild and clear', async () => {
+  const booted = await boot()
+  try {
+    const session = { id: 'session-layered', header: { origin: undefined } }
+    emitSessionEvent(booted.listeners, session, { type: 'turn/start', data: { turn: 1 }, time: 500 })
+    emitSessionEvent(booted.listeners, session, {
+      type: 'user/message',
+      data: { source: { kind: 'user' }, message: { content: [{ type: 'text', text: '我叫小明，我喜欢喝茶。' }] } },
+      time: 510,
+    })
+    emitSessionEvent(booted.listeners, session, {
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: '记住了。' }] } },
+      time: 520,
+    })
+    emitSessionEvent(booted.listeners, session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } }, time: 530 })
+
+    const stateResponse = await callRoute(booted.routes, '/memory-brain/state')
+    assert.equal(stateResponse.status, 200)
+    const state = stateResponse.body.state
+    assert.equal(state.version, 2)
+    assert.equal(state.features.factExtraction, true)
+    assert.ok(Array.isArray(state.facts))
+    assert.ok(Array.isArray(state.summaries.sessions))
+    assert.ok(state.factsStats.total >= 1, 'live turn produced structured facts')
+
+    const rebuiltFacts = await callRoute(booted.routes, '/memory-brain/facts/rebuild', { method: 'POST', body: { clear: true } })
+    assert.equal(rebuiltFacts.status, 200)
+    assert.equal(rebuiltFacts.body.ok, true)
+    assert.ok(rebuiltFacts.body.state.factsStats.active >= 1)
+
+    const rebuiltSummaries = await callRoute(booted.routes, '/memory-brain/summaries/rebuild', { method: 'POST', body: {} })
+    assert.equal(rebuiltSummaries.status, 200)
+    assert.ok(rebuiltSummaries.body.state.summaryStats.sessions >= 1)
+
+    const featureResponse = await callRoute(booted.routes, '/memory-brain/features', { method: 'POST', body: { features: { factExtraction: false } } })
+    assert.equal(featureResponse.status, 200)
+    assert.equal(featureResponse.body.state.features.factExtraction, false)
+    assert.equal(featureResponse.body.state.facts.length, 0, 'facts hidden when the step is off')
+    assert.ok(featureResponse.body.state.factsStats.total >= 1, 'stored facts are retained for rollback')
+
+    const clearedFacts = await callRoute(booted.routes, '/memory-brain/facts/clear', { method: 'POST', body: {} })
+    assert.equal(clearedFacts.status, 200)
+    assert.ok(clearedFacts.body.removed >= 1)
+    const clearedSummaries = await callRoute(booted.routes, '/memory-brain/summaries/clear', { method: 'POST', body: {} })
+    assert.equal(clearedSummaries.status, 200)
+    assert.ok(clearedSummaries.body.removed >= 1)
+  } finally {
+    await booted.teardown()
+  }
+})
+
+test('agent tool exposes layered-memory actions', async () => {
+  const booted = await boot()
+  try {
+    const session = { id: 'session-tool-layered', header: { origin: undefined } }
+    emitSessionEvent(booted.listeners, session, { type: 'turn/start', data: { turn: 1 }, time: 500 })
+    emitSessionEvent(booted.listeners, session, {
+      type: 'user/message',
+      data: { source: { kind: 'user' }, message: { content: [{ type: 'text', text: '我叫小明，我喜欢喝茶。' }] } },
+      time: 510,
+    })
+    emitSessionEvent(booted.listeners, session, {
+      type: 'assistant/message',
+      data: { message: { content: [{ type: 'text', text: '记住了。' }] } },
+      time: 520,
+    })
+    emitSessionEvent(booted.listeners, session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } }, time: 530 })
+    const tool = booted.tools.get('brain_memory')
+    assert.ok(tool)
+
+    const facts = await tool.execute({ action: 'facts', query: '小明' }, { agent: { id: 'session-tool-layered' } })
+    assert.equal(facts.ok, true)
+    assert.ok(facts.count >= 1)
+    assert.ok(facts.facts.some((fact) => fact.value.includes('小明')))
+
+    const summaries = await tool.execute({ action: 'summaries', level: 'all' }, { agent: { id: 'session-tool-layered' } })
+    assert.equal(summaries.ok, true)
+    assert.ok(typeof summaries.summaries === 'object')
+
+    const toggled = await tool.execute({ action: 'features', features: { temporalHistory: true } }, { agent: { id: 'session-tool-layered' } })
+    assert.equal(toggled.ok, true)
+    assert.equal(toggled.features.temporalHistory, true)
+
+    const rebuilt = await tool.execute({ action: 'rebuild', target: 'all' }, { agent: { id: 'session-tool-layered' } })
+    assert.equal(rebuilt.ok, true)
+
+    const recall = await tool.execute({ action: 'recall', query: '我叫什么', layer: 'auto' }, { agent: { id: 'session-tool-layered' } })
+    assert.equal(recall.ok, true)
+    assert.equal(typeof recall.layer, 'string')
+    assert.ok(Array.isArray(recall.facts))
+    assert.ok(Array.isArray(recall.summaries))
   } finally {
     await booted.teardown()
   }

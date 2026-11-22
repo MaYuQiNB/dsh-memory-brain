@@ -47,9 +47,33 @@ window.__ModuleLoader__.load({
       sleep: '/memory-brain/sleep',
       capture: '/memory-brain/capture',
       settings: '/memory-brain/settings',
+      features: '/memory-brain/features',
+      factsRebuild: '/memory-brain/facts/rebuild',
+      factsClear: '/memory-brain/facts/clear',
+      summariesRebuild: '/memory-brain/summaries/rebuild',
+      summariesClear: '/memory-brain/summaries/clear',
       purge: '/memory-brain/purge',
       reset: '/memory-brain/reset',
     }
+
+    /** Upgrade switches (CONTRACT 十四): every step is independently rollbackable. */
+    const DEFAULT_FEATURES = {
+      factExtraction: true,
+      factDedup: true,
+      factConflict: true,
+      sessionSummary: true,
+      dailyWeeklySummary: true,
+      layeredRecall: true,
+      semanticRecall: false,
+      temporalHistory: false,
+    }
+    const FEATURE_KEYS = Object.keys(DEFAULT_FEATURES)
+    /** Settings-panel grouping for the eight upgrade switches (batches 1–3). */
+    const FEATURE_GROUPS = [
+      { batch: 1, titleKey: 'settings.batch1', items: ['factExtraction', 'factDedup', 'factConflict'] },
+      { batch: 2, titleKey: 'settings.batch2', items: ['sessionSummary', 'dailyWeeklySummary', 'layeredRecall'] },
+      { batch: 3, titleKey: 'settings.batch3', items: ['semanticRecall', 'temporalHistory'] },
+    ]
 
     // Canvas layout / simulation constants, in world (layout) units.
     const SEED_RADIUS = 440
@@ -216,6 +240,52 @@ window.__ModuleLoader__.load({
       'settings.save': '保存设置',
       'settings.saving': '保存中…',
       'settings.invalid': '遗忘时间需在 1–60 天，记忆上限需在 100–2000。',
+      'settings.upgradeTitle': '记忆系统升级（可单独回滚）',
+      'settings.upgradeHint': '每项独立开关，关掉即回滚该步；已有数据保留，可手动清空。',
+      'settings.batch1': '批次 1 · 结构化事实',
+      'settings.batch2': '批次 2 · 摘要与分层检索',
+      'settings.batch3': '批次 3 · 高级召回',
+      'settings.feature.factExtraction': '事实抽取',
+      'settings.feature.factExtractionHint': '每轮对话后抽取「主体-属性-值」事实。',
+      'settings.feature.factDedup': '事实去重',
+      'settings.feature.factDedupHint': '相同事实合并，累计出现次数。',
+      'settings.feature.factConflict': '冲突替换',
+      'settings.feature.factConflictHint': '同一属性出现新值时，旧值失效。',
+      'settings.feature.sessionSummary': '会话摘要',
+      'settings.feature.sessionSummaryHint': '每个任务保留一句摘要。',
+      'settings.feature.dailyWeeklySummary': '每日 / 每周汇总',
+      'settings.feature.dailyWeeklySummaryHint': '按日、按周汇总记忆内容。',
+      'settings.feature.layeredRecall': '分层检索',
+      'settings.feature.layeredRecallHint': '按问题复杂度自动选择摘要层。',
+      'settings.feature.semanticRecall': '语义召回',
+      'settings.feature.semanticRecallHint': '离线向量相似度召回，不联网。',
+      'settings.feature.temporalHistory': '时序关系',
+      'settings.feature.temporalHistoryHint': '检索时附带已失效的旧值与来源。',
+      'settings.factsStats': '事实 {active}/{total} · 主体 {subjects}',
+      'settings.summaryStats': '摘要 会话 {sessions} · 每日 {daily} · 每周 {weekly}',
+      'settings.dataActions': '事实与摘要数据',
+      'settings.factsRebuild': '重建事实',
+      'settings.factsRebuilding': '重建中…',
+      'settings.factsClear': '清空事实',
+      'settings.factsClearConfirm': '再点确认清空事实',
+      'settings.factsClearing': '清空中…',
+      'settings.summariesRebuild': '重建摘要',
+      'settings.summariesRebuilding': '重建中…',
+      'settings.summariesClear': '清空摘要',
+      'settings.summariesClearConfirm': '再点确认清空摘要',
+      'settings.summariesClearing': '清空中…',
+      'knowledge.title': '知识层',
+      'knowledge.hint': '有效事实最多显示 30 条。',
+      'knowledge.empty': '还没有抽取到事实。开启「事实抽取」后，新对话会自动积累。',
+      'knowledge.total': '共 {total} 条',
+      'summaries.title': '摘要层',
+      'summaries.hint': '会话 / 每日 / 每周各最多 10 条，按时间倒序。',
+      'summaries.empty': '还没有摘要。开启「会话摘要」或「每日 / 每周汇总」后会生成。',
+      'summaries.sessions': '会话摘要',
+      'summaries.daily': '每日汇总',
+      'summaries.weekly': '每周汇总',
+      'summaries.sessionFallback': '未命名任务',
+      'summaries.countItems': '{count} 条',
       'time.justNow': '刚刚',
       'time.minutesAgo': '{count} 分钟前',
       'time.hoursAgo': '{count} 小时前',
@@ -376,6 +446,52 @@ window.__ModuleLoader__.load({
       'settings.save': 'Save settings',
       'settings.saving': 'Saving…',
       'settings.invalid': 'Forgetting time must be 1–60 days; the memory cap must be 100–2000.',
+      'settings.upgradeTitle': 'Memory system upgrade (rollback per step)',
+      'settings.upgradeHint': 'Every switch is independent: turning one off rolls that step back; existing data is kept and can be cleared manually.',
+      'settings.batch1': 'Batch 1 · Structured facts',
+      'settings.batch2': 'Batch 2 · Summaries and layered recall',
+      'settings.batch3': 'Batch 3 · Advanced recall',
+      'settings.feature.factExtraction': 'Fact extraction',
+      'settings.feature.factExtractionHint': 'Extract subject-attribute-value facts after each turn.',
+      'settings.feature.factDedup': 'Fact deduplication',
+      'settings.feature.factDedupHint': 'Merge identical facts and count occurrences.',
+      'settings.feature.factConflict': 'Conflict replacement',
+      'settings.feature.factConflictHint': 'A newer value for the same attribute invalidates the old one.',
+      'settings.feature.sessionSummary': 'Session summaries',
+      'settings.feature.sessionSummaryHint': 'Keep one summary sentence per task.',
+      'settings.feature.dailyWeeklySummary': 'Daily / weekly rollups',
+      'settings.feature.dailyWeeklySummaryHint': 'Roll memories up by day and by week.',
+      'settings.feature.layeredRecall': 'Layered recall',
+      'settings.feature.layeredRecallHint': 'Pick the summary layer automatically from question complexity.',
+      'settings.feature.semanticRecall': 'Semantic recall',
+      'settings.feature.semanticRecallHint': 'Offline vector similarity recall; no network calls.',
+      'settings.feature.temporalHistory': 'Temporal history',
+      'settings.feature.temporalHistoryHint': 'Recall also returns superseded values and their sources.',
+      'settings.factsStats': 'Facts {active}/{total} · subjects {subjects}',
+      'settings.summaryStats': 'Summaries sessions {sessions} · daily {daily} · weekly {weekly}',
+      'settings.dataActions': 'Facts and summaries data',
+      'settings.factsRebuild': 'Rebuild facts',
+      'settings.factsRebuilding': 'Rebuilding…',
+      'settings.factsClear': 'Clear facts',
+      'settings.factsClearConfirm': 'Click again to clear facts',
+      'settings.factsClearing': 'Clearing…',
+      'settings.summariesRebuild': 'Rebuild summaries',
+      'settings.summariesRebuilding': 'Rebuilding…',
+      'settings.summariesClear': 'Clear summaries',
+      'settings.summariesClearConfirm': 'Click again to clear summaries',
+      'settings.summariesClearing': 'Clearing…',
+      'knowledge.title': 'Knowledge layer',
+      'knowledge.hint': 'Up to 30 active facts are shown.',
+      'knowledge.empty': 'No facts extracted yet. Enable “Fact extraction” and new conversations will accumulate them.',
+      'knowledge.total': '{total} total',
+      'summaries.title': 'Summary layer',
+      'summaries.hint': 'Up to 10 session / daily / weekly items each, newest first.',
+      'summaries.empty': 'No summaries yet. Enable “Session summaries” or “Daily / weekly rollups” to generate them.',
+      'summaries.sessions': 'Session summaries',
+      'summaries.daily': 'Daily rollups',
+      'summaries.weekly': 'Weekly rollups',
+      'summaries.sessionFallback': 'Untitled task',
+      'summaries.countItems': '{count} items',
       'time.justNow': 'just now',
       'time.minutesAgo': '{count} min ago',
       'time.hoursAgo': '{count} h ago',
@@ -584,6 +700,24 @@ window.__ModuleLoader__.load({
 .dsh-memory-brain-taskEmptyBody{margin:0;max-width:46ch;font-size:13px;line-height:20px}
 .dsh-memory-brain-taskEmptyActions{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:10px}
 .dsh-memory-brain-taskLoading{display:flex;flex:1;align-items:center;justify-content:center;gap:8px;min-height:200px;color:var(--dsw-alias-label-tertiary);font-size:13px}
+.dsh-memory-brain-upgradeBlock{display:flex;flex-direction:column;gap:8px;margin-top:2px;padding-top:10px;border-top:.5px solid var(--dsw-alias-border-l3)}
+.dsh-memory-brain-upgradeTitle{margin:0;font-size:12px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.dsh-memory-brain-featureStats{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-caption)}
+.dsh-memory-brain-featureGroup{display:flex;flex-direction:column;gap:2px;padding-top:6px;border-top:.5px dashed var(--dsw-alias-border-l3)}
+.dsh-memory-brain-featureGroupTitle{margin:0;font-size:11px;font-weight:600;line-height:16px;color:var(--dsw-alias-label-tertiary);letter-spacing:.02em}
+.dsh-memory-brain-dataActions{display:flex;flex-wrap:wrap;gap:6px}
+.dsh-memory-brain-knowledgeScroll,.dsh-memory-brain-summaryScroll{margin-top:4px;max-height:240px;overflow:auto;scrollbar-gutter:stable}
+.dsh-memory-brain-knowledgeList,.dsh-memory-brain-summaryList{display:flex;flex-direction:column;gap:0;margin:0;padding:0;list-style:none}
+.dsh-memory-brain-knowledgeItem{display:flex;align-items:baseline;gap:8px;padding:3px 4px;border-bottom:.5px solid var(--dsw-alias-border-l3);font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.dsh-memory-brain-knowledgeItem:last-child{border-bottom:0}
+.dsh-memory-brain-knowledgeMain{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-memory-brain-knowledgeCount{flex:none;color:var(--dsw-alias-label-caption);font-size:11px;line-height:16px}
+.dsh-memory-brain-summaryGroup{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.dsh-memory-brain-summaryGroupTitle{margin:0;font-size:11px;font-weight:600;line-height:16px;color:var(--dsw-alias-label-tertiary);letter-spacing:.02em}
+.dsh-memory-brain-summaryItem{display:flex;flex-direction:column;gap:1px;padding:4px;border-bottom:.5px solid var(--dsw-alias-border-l3);font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.dsh-memory-brain-summaryItem:last-child{border-bottom:0}
+.dsh-memory-brain-summaryMeta{color:var(--dsw-alias-label-caption);font-size:11px;line-height:16px;overflow-wrap:anywhere}
+.dsh-memory-brain-summaryText{overflow-wrap:anywhere}
 @media (max-width:820px){
 .dsh-memory-brain-taskBody{flex-direction:column;overflow-y:auto;overflow-x:hidden}
 .dsh-memory-brain-taskMain{overflow:visible}
@@ -833,6 +967,137 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** Parse the eight upgrade switches; legacy state falls back to defaults. */
+    function normalizeFeatures(rawFeatures) {
+      const source = isObject(rawFeatures) ? rawFeatures : {}
+      const features = {}
+      for (const key of FEATURE_KEYS) {
+        const value = source[key]
+        features[key] = typeof value === 'boolean' ? value : DEFAULT_FEATURES[key]
+      }
+      return features
+    }
+
+    function normalizeFact(raw) {
+      if (!isObject(raw)) return null
+      const id = textOf(raw.id)
+      const value = textOf(raw.value)
+      if (id === '' || value === '') return null
+      return {
+        id,
+        subject: textOf(raw.subject) || '用户',
+        attribute: textOf(raw.attribute) || '其他',
+        value,
+        subjectKey: textOf(raw.subjectKey),
+        slotKey: textOf(raw.slotKey),
+        valueKey: textOf(raw.valueKey),
+        sessionId: textOf(raw.sessionId),
+        sessionTitle: textOf(raw.sessionTitle),
+        turn: clamp(num(raw.turn, 0), 0, 1e6),
+        sourceMemoryIds: stringList(raw.sourceMemoryIds).slice(0, 20),
+        confidence: clamp(num(raw.confidence, 0), 0, 1),
+        createdAt: num(raw.createdAt, 0),
+        lastSeenAt: num(raw.lastSeenAt, 0),
+        seenCount: clamp(num(raw.seenCount, 1), 0, 1e9),
+        invalidatedAt: num(raw.invalidatedAt, 0),
+        invalidatedBy: textOf(raw.invalidatedBy),
+        invalidReason: textOf(raw.invalidReason),
+      }
+    }
+
+    /** Normalize the Host's valid-only facts (already newest-first, cap 200). */
+    function normalizeFacts(rawFacts) {
+      const facts = []
+      if (!Array.isArray(rawFacts)) return facts
+      for (const item of rawFacts) {
+        const fact = normalizeFact(item)
+        if (fact !== null) facts.push(fact)
+      }
+      facts.sort((left, right) => (right.lastSeenAt - left.lastSeenAt) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+      return facts.slice(0, 200)
+    }
+
+    function normalizeFactsStats(rawStats, facts) {
+      const source = isObject(rawStats) ? rawStats : {}
+      const activeFacts = facts.filter((fact) => fact.invalidatedAt === 0 && fact.invalidReason === '')
+      const subjects = new Set(activeFacts.map((fact) => fact.subjectKey || fact.subject))
+      return {
+        total: clamp(num(source.total, facts.length), 0, 1e9),
+        active: clamp(num(source.active, activeFacts.length), 0, 1e9),
+        superseded: clamp(num(source.superseded, Math.max(0, facts.length - activeFacts.length)), 0, 1e9),
+        subjects: clamp(num(source.subjects, subjects.size), 0, 1e9),
+      }
+    }
+
+    /** Normalize the three summary layers; missing fields become empty layers. */
+    function normalizeSummaries(rawSummaries, rawSummaryStats) {
+      const source = isObject(rawSummaries) ? rawSummaries : {}
+      const sessions = []
+      if (Array.isArray(source.sessions)) {
+        for (const item of source.sessions) {
+          if (!isObject(item)) continue
+          const text = textOf(item.text)
+          if (text === '') continue
+          sessions.push({
+            id: textOf(item.id) || `session-${sessions.length}`,
+            sessionId: textOf(item.sessionId),
+            title: textOf(item.title),
+            text,
+            basedOnCount: clamp(num(item.basedOnCount, 0), 0, 1e9),
+            updatedAt: num(item.updatedAt, 0),
+          })
+        }
+      }
+      sessions.sort((left, right) => right.updatedAt - left.updatedAt)
+      const daily = []
+      if (Array.isArray(source.daily)) {
+        for (const item of source.daily) {
+          if (!isObject(item)) continue
+          const text = textOf(item.text)
+          if (text === '') continue
+          daily.push({
+            id: textOf(item.id) || `daily-${daily.length}`,
+            date: textOf(item.date),
+            text,
+            count: clamp(num(item.count, 0), 0, 1e9),
+            topTags: stringList(item.topTags),
+            updatedAt: num(item.updatedAt, 0),
+          })
+        }
+      }
+      daily.sort((left, right) => (left.date < right.date ? 1 : left.date > right.date ? -1 : right.updatedAt - left.updatedAt))
+      const weekly = []
+      if (Array.isArray(source.weekly)) {
+        for (const item of source.weekly) {
+          if (!isObject(item)) continue
+          const text = textOf(item.text)
+          if (text === '') continue
+          weekly.push({
+            id: textOf(item.id) || `weekly-${weekly.length}`,
+            week: textOf(item.week),
+            text,
+            count: clamp(num(item.count, 0), 0, 1e9),
+            topTags: stringList(item.topTags),
+            updatedAt: num(item.updatedAt, 0),
+          })
+        }
+      }
+      weekly.sort((left, right) => (left.week < right.week ? 1 : left.week > right.week ? -1 : right.updatedAt - left.updatedAt))
+      const statsSource = isObject(rawSummaryStats) ? rawSummaryStats : {}
+      return {
+        summaries: {
+          sessions: sessions.slice(0, 100),
+          daily: daily.slice(0, 30),
+          weekly: weekly.slice(0, 12),
+        },
+        summaryStats: {
+          sessions: clamp(num(statsSource.sessions, sessions.length), 0, 1e9),
+          daily: clamp(num(statsSource.daily, daily.length), 0, 1e9),
+          weekly: clamp(num(statsSource.weekly, weekly.length), 0, 1e9),
+        },
+      }
+    }
+
     function normalizeSnapshot(raw) {
       if (!isObject(raw)) return null
       if (!Array.isArray(raw.nodes) || !Array.isArray(raw.edges)) return null
@@ -927,12 +1192,21 @@ window.__ModuleLoader__.load({
         }
       }
       sessions.sort((left, right) => right.lastAt - left.lastAt)
+      const features = normalizeFeatures(raw.features)
+      const facts = normalizeFacts(raw.facts)
+      const factsStats = normalizeFactsStats(raw.factsStats, facts)
+      const summaryBundle = normalizeSummaries(raw.summaries, raw.summaryStats)
       return {
         version: clamp(num(raw.version, 1), 1, 1000),
         revision: clamp(num(raw.revision, 0), 0, Number.MAX_SAFE_INTEGER),
         now: num(raw.now, Date.now()),
         settings,
         stats,
+        features,
+        facts,
+        factsStats,
+        summaries: summaryBundle.summaries,
+        summaryStats: summaryBundle.summaryStats,
         tags,
         sessions,
         nodes,
@@ -2616,24 +2890,43 @@ window.__ModuleLoader__.load({
     }
 
     /** Settings form; the draft is local until "save" POSTs `/settings`. */
-    function SettingsPanel({ open, settings, actions, pending, t }) {
+    function SettingsPanel({ open, settings, features, factsStats, summaryStats, actions, pending, t }) {
       const [draft, setDraft] = React.useState(null)
       const [invalid, setInvalid] = React.useState(false)
       const forgetAfterDays = settings === null ? null : settings.forgetAfterDays
       const forgettingEnabled = settings === null ? null : settings.forgettingEnabled
       const maxMemories = settings === null ? null : settings.maxMemories
       const autoCapture = settings === null ? null : settings.autoCapture
+      // Primitive signature: the features object is re-created on every poll,
+      // and an object dependency would reset the draft while the user edits it.
+      let featureSignature = ''
+      for (const key of FEATURE_KEYS) {
+        featureSignature += features !== null && isObject(features) && features[key] === true ? '1' : '0'
+      }
       React.useEffect(() => {
         if (!open || settings === null) return
+        const nextFeatures = {}
+        for (const key of FEATURE_KEYS) {
+          nextFeatures[key] = features !== null && isObject(features) && typeof features[key] === 'boolean'
+            ? features[key]
+            : DEFAULT_FEATURES[key]
+        }
         setDraft({
           forgetAfterDays: String(settings.forgetAfterDays),
           forgettingEnabled: settings.forgettingEnabled === true,
           maxMemories: String(settings.maxMemories),
           autoCapture: settings.autoCapture === true,
+          features: nextFeatures,
         })
         setInvalid(false)
-      }, [open, forgetAfterDays, forgettingEnabled, maxMemories, autoCapture])
+      }, [open, forgetAfterDays, forgettingEnabled, maxMemories, autoCapture, featureSignature])
       if (!open) return null
+      const factsActive = factsStats === null || !isObject(factsStats) ? 0 : Math.round(num(factsStats.active, 0))
+      const factsTotal = factsStats === null || !isObject(factsStats) ? 0 : Math.round(num(factsStats.total, 0))
+      const factsSubjects = factsStats === null || !isObject(factsStats) ? 0 : Math.round(num(factsStats.subjects, 0))
+      const summarySessions = summaryStats === null || !isObject(summaryStats) ? 0 : Math.round(num(summaryStats.sessions, 0))
+      const summaryDaily = summaryStats === null || !isObject(summaryStats) ? 0 : Math.round(num(summaryStats.daily, 0))
+      const summaryWeekly = summaryStats === null || !isObject(summaryStats) ? 0 : Math.round(num(summaryStats.weekly, 0))
       const save = async () => {
         if (draft === null) return
         const forgetAfterDaysValue = Number(draft.forgetAfterDays)
@@ -2649,6 +2942,7 @@ window.__ModuleLoader__.load({
           forgettingEnabled: draft.forgettingEnabled === true,
           maxMemories: Math.round(maxMemoriesValue),
           autoCapture: draft.autoCapture === true,
+          features: draft.features === null || draft.features === undefined ? undefined : { ...draft.features },
         })
       }
       return h('section', { className: 'dsh-memory-brain-section' },
@@ -2707,6 +3001,72 @@ window.__ModuleLoader__.load({
               hint: t('settings.autoCaptureHint'),
               onChange: (next) => setDraft({ ...draft, autoCapture: next }),
             }),
+            h('div', { className: 'dsh-memory-brain-upgradeBlock' },
+              h('h3', { className: 'dsh-memory-brain-upgradeTitle' }, t('settings.upgradeTitle')),
+              h('p', { className: 'dsh-memory-brain-hint' }, t('settings.upgradeHint')),
+              h('div', { className: 'dsh-memory-brain-featureStats' },
+                h('span', null, t('settings.factsStats', {
+                  active: factsActive,
+                  total: factsTotal,
+                  subjects: factsSubjects,
+                })),
+                h('span', null, t('settings.summaryStats', {
+                  sessions: summarySessions,
+                  daily: summaryDaily,
+                  weekly: summaryWeekly,
+                }))),
+              FEATURE_GROUPS.map((group) => h('div', { key: group.batch, className: 'dsh-memory-brain-featureGroup' },
+                h('p', { className: 'dsh-memory-brain-featureGroupTitle' }, t(group.titleKey)),
+                group.items.map((featureId) => h(Toggle, {
+                  key: featureId,
+                  label: t(`settings.feature.${featureId}`),
+                  hint: t(`settings.feature.${featureId}Hint`),
+                  checked: draft.features !== null && draft.features !== undefined && draft.features[featureId] === true,
+                  onChange: (next) => setDraft({
+                    ...draft,
+                    features: { ...(draft.features === null || draft.features === undefined ? DEFAULT_FEATURES : draft.features), [featureId]: next },
+                  }),
+                })))),
+              h('p', { className: 'dsh-memory-brain-subSectionTitle' }, t('settings.dataActions')),
+              h('div', { className: 'dsh-memory-brain-dataActions' },
+                h('button', {
+                  type: 'button',
+                  className: 'dsh-memory-brain-btn dsh-memory-brain-btn-secondary dsh-memory-brain-btn-small',
+                  disabled: pending !== null,
+                  onClick: () => {
+                    void actions.rebuildFacts()
+                  },
+                }, pending === 'rebuildFacts' ? t('settings.factsRebuilding') : t('settings.factsRebuild')),
+                h(DangerButton, {
+                  idleLabel: t('settings.factsClear'),
+                  confirmLabel: t('settings.factsClearConfirm'),
+                  pendingLabel: t('settings.factsClearing'),
+                  pending: pending === 'clearFacts',
+                  disabled: pending !== null,
+                  className: 'dsh-memory-brain-btn-dangerGhost dsh-memory-brain-btn-small',
+                  onConfirm: () => {
+                    void actions.clearFacts()
+                  },
+                }),
+                h('button', {
+                  type: 'button',
+                  className: 'dsh-memory-brain-btn dsh-memory-brain-btn-secondary dsh-memory-brain-btn-small',
+                  disabled: pending !== null,
+                  onClick: () => {
+                    void actions.rebuildSummaries()
+                  },
+                }, pending === 'rebuildSummaries' ? t('settings.summariesRebuilding') : t('settings.summariesRebuild')),
+                h(DangerButton, {
+                  idleLabel: t('settings.summariesClear'),
+                  confirmLabel: t('settings.summariesClearConfirm'),
+                  pendingLabel: t('settings.summariesClearing'),
+                  pending: pending === 'clearSummaries',
+                  disabled: pending !== null,
+                  className: 'dsh-memory-brain-btn-dangerGhost dsh-memory-brain-btn-small',
+                  onConfirm: () => {
+                    void actions.clearSummaries()
+                  },
+                }))),
             invalid ? h('p', { className: 'dsh-memory-brain-errorText' }, t('settings.invalid')) : null,
             h('button', {
               type: 'button',
@@ -2716,6 +3076,84 @@ window.__ModuleLoader__.load({
                 void save()
               },
             }, pending === 'settings' ? t('settings.saving') : t('settings.save'))))
+    }
+
+    // ---------------------------------------------------------------------
+    // Knowledge / summary layers (CONTRACT 十七: right-rail readers)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Read-only "knowledge layer": up to 30 active structured facts rendered
+     * as "subject · attribute → value ×seenCount" (CONTRACT 十七).
+     * @param {{ data: any, t: any }} props
+     */
+    function KnowledgeLayer({ data, t }) {
+      const facts = data === null || data === undefined || !Array.isArray(data.facts) ? [] : data.facts
+      const activeFacts = []
+      for (const fact of facts) {
+        if (!isObject(fact) || textOf(fact.value) === '') continue
+        if (num(fact.invalidatedAt, 0) !== 0) continue
+        activeFacts.push(fact)
+        if (activeFacts.length >= 30) break
+      }
+      const factsTotal = data !== null && data !== undefined && isObject(data.factsStats)
+        ? Math.round(num(data.factsStats.active, activeFacts.length))
+        : activeFacts.length
+      return h('section', { className: 'dsh-memory-brain-section' },
+        h('h2', { className: 'dsh-memory-brain-sectionTitle' },
+          h('span', null, t('knowledge.title')),
+          h('span', { className: 'dsh-memory-brain-listMeta' }, t('knowledge.total', { total: factsTotal }))),
+        h('p', { className: 'dsh-memory-brain-hint' }, t('knowledge.hint')),
+        activeFacts.length === 0
+          ? h('p', { className: 'dsh-memory-brain-hint' }, t('knowledge.empty'))
+          : h('div', { className: 'dsh-memory-brain-knowledgeScroll' },
+            h('ul', { className: 'dsh-memory-brain-knowledgeList' }, activeFacts.map((fact) => {
+              const summary = `${textOf(fact.subject) || '用户'} · ${textOf(fact.attribute) || '其他'} → ${textOf(fact.value)}`
+              return h('li', { key: textOf(fact.id), className: 'dsh-memory-brain-knowledgeItem' },
+                h('span', { className: 'dsh-memory-brain-knowledgeMain', title: summary }, summary),
+                h('span', { className: 'dsh-memory-brain-knowledgeCount' }, `×${Math.round(num(fact.seenCount, 1))}`))
+            }))))
+    }
+
+    /**
+     * Read-only "summary layer": session / daily / weekly summaries, newest
+     * first, at most 10 rows per group (CONTRACT 十七).
+     * @param {{ data: any, t: any }} props
+     */
+    function SummaryLayer({ data, t }) {
+      const summaries = data === null || data === undefined || !isObject(data.summaries) ? null : data.summaries
+      const sessions = summaries !== null && Array.isArray(summaries.sessions) ? summaries.sessions.slice(0, 10) : []
+      const daily = summaries !== null && Array.isArray(summaries.daily) ? summaries.daily.slice(0, 10) : []
+      const weekly = summaries !== null && Array.isArray(summaries.weekly) ? summaries.weekly.slice(0, 10) : []
+      const total = sessions.length + daily.length + weekly.length
+      const totalCount = data !== null && data !== undefined && isObject(data.summaryStats)
+        ? Math.round(num(data.summaryStats.sessions, 0) + num(data.summaryStats.daily, 0) + num(data.summaryStats.weekly, 0))
+        : total
+      const group = (key, title, items, renderMeta) => h('div', { key, className: 'dsh-memory-brain-summaryGroup' },
+        h('p', { className: 'dsh-memory-brain-summaryGroupTitle' }, title),
+        h('ul', { className: 'dsh-memory-brain-summaryList' }, items.map((item, index) => h('li', {
+          key: textOf(item.id) || `${key}-${index}`,
+          className: 'dsh-memory-brain-summaryItem',
+        },
+          h('span', { className: 'dsh-memory-brain-summaryMeta' }, renderMeta(item)),
+          h('span', { className: 'dsh-memory-brain-summaryText' }, textOf(item.text))))))
+      return h('section', { className: 'dsh-memory-brain-section' },
+        h('h2', { className: 'dsh-memory-brain-sectionTitle' },
+          h('span', null, t('summaries.title')),
+          h('span', { className: 'dsh-memory-brain-listMeta' }, t('knowledge.total', { total: totalCount }))),
+        h('p', { className: 'dsh-memory-brain-hint' }, t('summaries.hint')),
+        total === 0
+          ? h('p', { className: 'dsh-memory-brain-hint' }, t('summaries.empty'))
+          : h('div', { className: 'dsh-memory-brain-summaryScroll' },
+            sessions.length === 0
+              ? null
+              : group('sessions', t('summaries.sessions'), sessions, (item) => textOf(item.title) || t('summaries.sessionFallback')),
+            daily.length === 0
+              ? null
+              : group('daily', t('summaries.daily'), daily, (item) => `${textOf(item.date)} · ${t('summaries.countItems', { count: Math.round(num(item.count, 0)) })}`),
+            weekly.length === 0
+              ? null
+              : group('weekly', t('summaries.weekly'), weekly, (item) => `${textOf(item.week)} · ${t('summaries.countItems', { count: Math.round(num(item.count, 0)) })}`)))
     }
 
     // ---------------------------------------------------------------------
@@ -4248,10 +4686,15 @@ window.__ModuleLoader__.load({
               h(SettingsPanel, {
                 open: settingsOpen,
                 settings: data === null ? null : data.settings,
+                features: data === null ? null : data.features,
+                factsStats: data === null ? null : data.factsStats,
+                summaryStats: data === null ? null : data.summaryStats,
                 actions: { ...actions, hideSettings: () => setSettingsOpen(false) },
                 pending,
                 t,
               }),
+              data === null ? null : h(KnowledgeLayer, { data, t }),
+              data === null ? null : h(SummaryLayer, { data, t }),
               h('p', { className: 'dsh-memory-brain-footNote' }, t('poll.hint'))))),
         fullscreenActive
           ? h('div', { className: 'dsh-memory-brain-fullscreenBar', role: 'toolbar', 'aria-label': t('view.fullscreenBar') },
@@ -4428,7 +4871,13 @@ window.__ModuleLoader__.load({
           forgettingEnabled: partial.forgettingEnabled,
           autoCapture: partial.autoCapture,
           maxMemories: partial.maxMemories,
+          // The upgrade switches travel with the settings save (still one POST).
+          features: isObject(partial.features) ? partial.features : undefined,
         }),
+        rebuildFacts: () => run('rebuildFacts', ROUTES.factsRebuild, {}),
+        clearFacts: () => run('clearFacts', ROUTES.factsClear, {}),
+        rebuildSummaries: () => run('rebuildSummaries', ROUTES.summariesRebuild, {}),
+        clearSummaries: () => run('clearSummaries', ROUTES.summariesClear, {}),
         purge: () => run('purge', ROUTES.purge, {}),
         reset: () => run('reset', ROUTES.reset, {}),
       }

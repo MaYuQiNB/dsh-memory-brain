@@ -520,6 +520,27 @@ export function apply(ctx) {
         const { state } = await store.commitNow(() => store.updateSettings(body))
         return { ok: true, state }
       }
+      case 'features': {
+        const patch = body.features !== null && typeof body.features === 'object' ? body.features : body
+        const { state, value } = await store.commitNow(() => store.updateFeatures(patch))
+        return { ok: true, state, features: value }
+      }
+      case 'facts/rebuild': {
+        const { state, value } = await store.commitNow(() => store.rebuildFacts({ clear: body.clear === true }))
+        return { ok: true, state, result: value }
+      }
+      case 'facts/clear': {
+        const { state, value } = await store.commitNow(() => store.clearFacts())
+        return { ok: true, state, removed: value }
+      }
+      case 'summaries/rebuild': {
+        const { state, value } = await store.commitNow(() => store.rebuildSummaries({ now: Date.now() }))
+        return { ok: true, state, result: value }
+      }
+      case 'summaries/clear': {
+        const { state, value } = await store.commitNow(() => store.clearSummaries())
+        return { ok: true, state, removed: value }
+      }
       case 'purge': {
         const removed = store.commitLight(() => store.purge())
         await store.flush()
@@ -547,6 +568,11 @@ export function apply(ctx) {
     { action: 'sleep', method: 'POST', suffix: '/sleep' },
     { action: 'capture', method: 'POST', suffix: '/capture' },
     { action: 'settings', method: 'POST', suffix: '/settings' },
+    { action: 'features', method: 'POST', suffix: '/features' },
+    { action: 'facts/rebuild', method: 'POST', suffix: '/facts/rebuild' },
+    { action: 'facts/clear', method: 'POST', suffix: '/facts/clear' },
+    { action: 'summaries/rebuild', method: 'POST', suffix: '/summaries/rebuild' },
+    { action: 'summaries/clear', method: 'POST', suffix: '/summaries/clear' },
     { action: 'purge', method: 'POST', suffix: '/purge' },
     { action: 'reset', method: 'POST', suffix: '/reset' },
   ]
@@ -624,6 +650,7 @@ export function apply(ctx) {
       '- 自动遗忘（不需要调用工具）：到达遗忘时间后，记忆的可读内容会被永久删除，只剩一个空的「已遗忘」墓碑（不可恢复），之后会被清理掉。',
       '- restore：恢复被遗忘的记忆，参数 id。',
       '- pin：固定/取消固定长期记忆，参数 id、pinned（布尔）。',
+      '- 分层记忆（可单独开关）：facts 查结构化事实（主体-属性-值，参数 query/subject/includeSuperseded）；summaries 查会话/每日/每周摘要（参数 level=session|daily|weekly|all）；features 看/改 8 个升级开关；rebuild 重建 facts/summaries（参数 target=facts|summaries|all、clear）。',
       '- sleep：立刻做一次巩固（合并语义记忆 + 清理彻底衰减的记忆）。',
       '- capture：扫描历史任务并补记记忆（首次安装后可用）。',
       '- settings：手动修改记忆设置——forgetAfterDays（遗忘时间，1–60 天，默认 7）、forgettingEnabled（是否启用遗忘，布尔，关掉则记忆冻结、不衰减也不删内容）、autoCapture（布尔）、maxMemories（100–2000）、consolidateEveryHours（1–24）。用户说「把遗忘时间改成 X 天」「关掉遗忘」「开启遗忘」时用它。',
@@ -635,18 +662,25 @@ export function apply(ctx) {
       properties: {
         action: {
           type: 'string',
-          enum: ['state', 'recall', 'remember', 'tag', 'untag', 'rehearse', 'forget', 'restore', 'pin', 'sleep', 'capture', 'settings'],
+          enum: ['state', 'recall', 'remember', 'tag', 'untag', 'rehearse', 'forget', 'restore', 'pin', 'sleep', 'capture', 'settings', 'features', 'facts', 'summaries', 'rebuild'],
           description: '要执行的操作。',
         },
         id: { type: 'string', description: 'tag/untag/rehearse/forget/restore/pin 的目标记忆 id。' },
         tag: { type: 'string', description: 'tag/untag：标签文本；recall：按标签筛选。' },
-        query: { type: 'string', description: 'recall：关键词（可空格分隔多个词）。' },
-        sessionId: { type: 'string', description: 'recall：只看某个任务（会话）的记忆。' },
-        limit: { type: 'number', description: 'recall：最多返回几条（默认 8，最多 30）。' },
+        query: { type: 'string', description: 'recall/facts：关键词（可空格分隔多个词）。' },
+        sessionId: { type: 'string', description: 'recall/facts：只看某个任务（会话）。' },
+        limit: { type: 'number', description: 'recall/facts/summaries：最多返回几条（默认 8 / 20）。' },
         text: { type: 'string', description: 'remember：要记住的内容。' },
         tags: { type: 'array', items: { type: 'string' }, description: 'remember：可选自定义标签。' },
         hard: { type: 'boolean', description: 'forget：true = 彻底删除，不留幽灵。' },
         pinned: { type: 'boolean', description: 'pin：true 固定为长期记忆，false 取消固定。' },
+        subject: { type: 'string', description: 'recall/facts：只看某个主体的事实（默认「用户」）。' },
+        includeSuperseded: { type: 'boolean', description: 'facts：true = 连已失效的旧事实一起返回（时序）。' },
+        layer: { type: 'string', enum: ['auto', 'raw', 'daily', 'weekly'], description: 'recall：检索层（auto = 按问题复杂度自动选）。' },
+        level: { type: 'string', enum: ['session', 'daily', 'weekly', 'all'], description: 'summaries：要看的摘要层。' },
+        target: { type: 'string', enum: ['facts', 'summaries', 'all'], description: 'rebuild：重建哪一层。' },
+        clear: { type: 'boolean', description: 'rebuild/features（facts/clear 时省略）：rebuild 前是否清空。' },
+        features: { type: 'object', additionalProperties: { type: 'boolean' }, description: 'features/settings：8 个开关的部分更新，例如 {"factExtraction":false}。' },
         forgetAfterDays: { type: 'number', description: 'settings：遗忘时间（天，1–60，默认 7）。' },
         forgettingEnabled: { type: 'boolean', description: 'settings：是否启用遗忘（false = 记忆冻结、不衰减也不删内容）。' },
         autoCapture: { type: 'boolean', description: 'settings：是否自动捕获新对话。' },
@@ -669,19 +703,43 @@ export function apply(ctx) {
         case 'state': {
           const summary = store.summary()
           const settings = store.publicSettings()
-          return { ok: true, text: renderStatsText(summary, settings), stats: summary, settings }
+          const snapshot = store.snapshot()
+          return {
+            ok: true,
+            text: renderStatsText(summary, settings),
+            stats: summary,
+            settings,
+            features: snapshot.features,
+            factsStats: snapshot.factsStats,
+            summaryStats: snapshot.summaryStats,
+          }
         }
         case 'recall': {
           const query = typeof args.query === 'string' ? args.query : ''
           const tag = typeof args.tag === 'string' ? args.tag : ''
           const sessionId = typeof args.sessionId === 'string' ? args.sessionId : ''
           const limit = Number.isFinite(args.limit) ? args.limit : 8
-          const results = store.recall({ query, tag, sessionId, limit })
-          if (results.length > 0) {
-            store.commitLight(() => store.rehearseMany(results.map((memory) => memory.id)))
+          const layer = typeof args.layer === 'string' ? args.layer : 'auto'
+          const subject = typeof args.subject === 'string' ? args.subject : ''
+          const result = store.recallWithContext({ query, tag, sessionId, limit, layer, subject, includeStructured: true })
+          const memories = result.items.filter((item) => item.kind === 'episode' || item.kind === 'semantic')
+          if (memories.length > 0) {
+            store.commitLight(() => store.rehearseMany(memories.map((memory) => memory.id)))
             void store.flush()
           }
-          return { ok: true, text: renderRecallText(results, { query, tag }), memories: results, count: results.length }
+          const facts = result.items.filter((item) => item.kind === 'fact')
+          const summaries = result.items.filter((item) => typeof item.kind === 'string' && item.kind.endsWith('-summary'))
+          return {
+            ok: true,
+            text: renderRecallText(result.items, { query, tag, layer: result.layer }),
+            layer: result.layer,
+            complexity: result.complexity,
+            items: result.items,
+            memories,
+            facts,
+            summaries,
+            count: result.items.length,
+          }
         }
         case 'remember': {
           const { value } = await store.commitNow(() => store.remember({
@@ -734,23 +792,81 @@ export function apply(ctx) {
         case 'settings': {
           /** @type {Record<string, any>} */
           const patch = {}
+          const featurePatch = args.features !== null && typeof args.features === 'object' ? args.features : null
           if (args.forgetAfterDays !== undefined) patch.forgetAfterDays = args.forgetAfterDays
           if (args.forgettingEnabled !== undefined) patch.forgettingEnabled = args.forgettingEnabled
           if (args.autoCapture !== undefined) patch.autoCapture = args.autoCapture
           if (args.maxMemories !== undefined) patch.maxMemories = args.maxMemories
           if (args.consolidateEveryHours !== undefined) patch.consolidateEveryHours = args.consolidateEveryHours
-          if (Object.keys(patch).length === 0) {
-            throw new Error('settings：至少给一个要改的字段（forgetAfterDays / forgettingEnabled / autoCapture / maxMemories / consolidateEveryHours）。')
+          if (Object.keys(patch).length === 0 && featurePatch === null) {
+            throw new Error('settings：至少给一个要改的字段（forgetAfterDays / forgettingEnabled / autoCapture / maxMemories / consolidateEveryHours / features）。')
           }
-          const { state } = await store.commitNow(() => store.updateSettings(patch))
+          if (featurePatch !== null) {
+            await store.commitNow(() => store.updateFeatures(featurePatch))
+          }
+          if (Object.keys(patch).length > 0) {
+            const { state } = await store.commitNow(() => store.updateSettings(patch))
+            return {
+              ok: true,
+              text: `已手动更新设置：遗忘${state.settings.forgettingEnabled ? '已开启' : '已暂停'}、遗忘时间 ${state.settings.forgetAfterDays} 天、自动捕获 ${state.settings.autoCapture ? '开' : '关'}、记忆上限 ${state.settings.maxMemories}${featurePatch !== null ? '；分层记忆开关已更新' : ''}。`,
+              settings: state.settings,
+              features: state.features,
+            }
+          }
+          const settings = store.publicSettings()
           return {
             ok: true,
-            text: `已手动更新设置：遗忘${state.settings.forgettingEnabled ? '已开启' : '已暂停'}、遗忘时间 ${state.settings.forgetAfterDays} 天、自动捕获 ${state.settings.autoCapture ? '开' : '关'}、记忆上限 ${state.settings.maxMemories}。`,
-            settings: state.settings,
+            text: `已更新分层记忆开关：${renderFeaturesText(settings.features)}`,
+            settings,
+            features: settings.features,
+          }
+        }
+        case 'features': {
+          const patch = args.features !== null && typeof args.features === 'object' ? args.features : {}
+          if (Object.keys(patch).length === 0) {
+            const current = store.publicSettings().features
+            return { ok: true, text: renderFeaturesText(current), features: current }
+          }
+          const { value } = await store.commitNow(() => store.updateFeatures(patch))
+          return { ok: true, text: renderFeaturesText(value), features: value }
+        }
+        case 'facts': {
+          const facts = store.listFacts({
+            query: typeof args.query === 'string' ? args.query : '',
+            subject: typeof args.subject === 'string' ? args.subject : '',
+            sessionId: typeof args.sessionId === 'string' ? args.sessionId : '',
+            includeSuperseded: args.includeSuperseded === true,
+            limit: Number.isFinite(args.limit) ? args.limit : 20,
+          })
+          return { ok: true, text: renderFactsText(facts), facts, count: facts.length }
+        }
+        case 'summaries': {
+          const level = typeof args.level === 'string' ? args.level : 'all'
+          const summaries = store.listSummaries(level)
+          return { ok: true, text: renderSummariesText(summaries), summaries }
+        }
+        case 'rebuild': {
+          const target = typeof args.target === 'string' ? args.target : 'all'
+          const clear = args.clear === true
+          if (target === 'facts') {
+            const { value } = await store.commitNow(() => store.rebuildFacts({ clear }))
+            return { ok: true, text: `事实重建完成：共 ${value.total} 条（有效 ${value.active}，新增 ${value.added}，合并 ${value.merged}，冲突替换 ${value.superseded}）。`, result: value }
+          }
+          if (target === 'summaries') {
+            const { value } = await store.commitNow(() => store.rebuildSummaries({ now: Date.now() }))
+            return { ok: true, text: `摘要重建完成：会话 ${value.sessions} 条、每日 ${value.daily} 条、每周 ${value.weekly} 条。`, result: value }
+          }
+          const { value: factsResult } = await store.commitNow(() => store.rebuildFacts({ clear }))
+          const { value: summaryResult } = await store.commitNow(() => store.rebuildSummaries({ now: Date.now() }))
+          return {
+            ok: true,
+            text: `重建完成：事实 ${factsResult.total} 条（有效 ${factsResult.active}），会话摘要 ${summaryResult.sessions} 条、每日 ${summaryResult.daily} 条、每周 ${summaryResult.weekly} 条。`,
+            facts: factsResult,
+            summaries: summaryResult,
           }
         }
         default:
-          throw new Error(`未知 action：${action || '(空)'}。可用：state/recall/remember/tag/untag/rehearse/forget/restore/pin/sleep/capture/settings。`)
+          throw new Error(`未知 action：${action || '(空)'}。可用：state/recall/remember/tag/untag/rehearse/forget/restore/pin/sleep/capture/settings/features/facts/summaries/rebuild。`)
       }
     },
   }), 'dsh-memory-brain: tool')
@@ -770,7 +886,8 @@ export function apply(ctx) {
         `当前：${summary.total} 条记忆（活跃 ${summary.active} / 消退 ${summary.fading} / 遗忘 ${summary.forgotten} / 固定 ${summary.pinned}），覆盖 ${summary.sessions} 个任务、${summary.tags} 个标签，平均保持率 ${Math.round((Number(summary.avgRetention) || 0) * 100)}%。`,
         'QQ 桥接的聊天（QQ 好友/群）也会自动进入这个记忆库：记忆带「QQ」标签、归属于独立的 QQ 会话；用户问起 QQ 上聊过的事时，用 brain_memory recall（可加 tag="QQ"）就能想起来。',
         `当前遗忘时间：${store.publicSettings().forgetAfterDays} 天，遗忘开关：${store.publicSettings().forgettingEnabled ? '开启' : '暂停（关掉后记忆冻结、不衰减也不删内容）'}（用户可在设置面板手动改，或让 agent 调 brain_memory 的 settings 动作改 forgetAfterDays / forgettingEnabled）。到时间后记忆内容会被真正删除，只剩空墓碑。`,
-        '需要回忆旧信息时调用 brain_memory 工具：recall 按关键词/标签检索（检索本身会强化记忆）；state 看统计；remember 主动记住一条重要事实；tag/untag 改标签；rehearse 强化；forget/restore 遗忘或恢复；pin 固定为长期记忆；sleep 做一次巩固；capture 扫描历史会话。',
+        `分层记忆（每个开关都能在设置面板单独关掉回滚）：每轮对话会抽成「主体-属性-值-时间」事实并去重/冲突替换；每个会话有一句摘要，另有每日/每周汇总；recall 会按问题复杂度自动选层（简单问题查原始记忆/事实，复杂问题查汇总）。当前事实 ${store.summary().factCount} 条、摘要层 ${JSON.stringify(store.summary().summaryCounts)}。`,
+        '需要回忆旧信息时调用 brain_memory 工具：recall 按关键词/标签检索（检索本身会强化记忆）；state 看统计；remember 主动记住一条重要事实；tag/untag 改标签；rehearse 强化；forget/restore 遗忘或恢复；pin 固定为长期记忆；sleep 做一次巩固；capture 扫描历史会话；facts 查结构化事实；summaries 查摘要层；features 看/改 8 个升级开关。',
         '不要在回答里复述这段说明；只在确实需要旧信息时使用工具。',
       ].join('\n')
     },
@@ -853,32 +970,121 @@ function renderStatsText(stats, settings) {
   const lines = [
     `记忆库：${stats.total} 条（情节 ${stats.episodes} / 语义 ${stats.semantic}，活跃 ${stats.active} / 消退 ${stats.fading} / 遗忘 ${stats.forgotten} / 固定 ${stats.pinned}）`,
     `覆盖 ${stats.sessions} 个任务、${stats.tags} 个标签，平均保持率 ${Math.round((Number(stats.avgRetention) || 0) * 100)}%。自动捕获：${stats.autoCapture ? '开' : '关'}。`,
+    `分层记忆：结构化事实 ${stats.factCount ?? 0} 条；摘要层 会话 ${stats.summaryCounts?.sessions ?? 0} / 每日 ${stats.summaryCounts?.daily ?? 0} / 每周 ${stats.summaryCounts?.weekly ?? 0}。`,
   ]
   if (settings !== undefined) {
     lines.push(`当前设置：遗忘${settings.forgettingEnabled ? '开启' : '已暂停'}、遗忘时间 ${settings.forgetAfterDays} 天（可手动改：面板设置，或 brain_memory 的 settings 动作传 forgetAfterDays / forgettingEnabled）。`)
+    if (settings.features !== undefined) lines.push(`分层开关：${renderFeaturesText(settings.features)}`)
   }
   return lines.join('\n')
 }
 
 /**
- * Human-readable list for the RECALL tool action.
- * @param {Array<Record<string, any>>} memories Ranked memories.
- * @param {{ query: string, tag: string }} filters Applied filters.
+ * One-line rendering of the eight layered-memory toggles.
+ * @param {Record<string, boolean> | undefined} features Feature map.
  * @returns {string} Text.
  */
-function renderRecallText(memories, filters) {
-  if (memories.length === 0) {
+function renderFeaturesText(features) {
+  const source = features !== null && typeof features === 'object' ? features : {}
+  const labels = [
+    ['factExtraction', '抽事实'],
+    ['factDedup', '去重'],
+    ['factConflict', '冲突替换'],
+    ['sessionSummary', '会话摘要'],
+    ['dailyWeeklySummary', '日周汇总'],
+    ['layeredRecall', '分层检索'],
+    ['semanticRecall', '语义召回'],
+    ['temporalHistory', '时序历史'],
+  ]
+  return labels.map(([key, label]) => `${label}${source[key] === true ? '开' : '关'}`).join('、')
+}
+
+/**
+ * Human-readable fact list.
+ * @param {Array<Record<string, any>>} facts Facts.
+ * @returns {string} Text.
+ */
+function renderFactsText(facts) {
+  if (!Array.isArray(facts) || facts.length === 0) return '还没有结构化事实（事实抽取可能关闭，或还没有可抽取的对话）。'
+  const lines = [`共 ${facts.length} 条事实：`]
+  for (const fact of facts) {
+    const suffix = fact.invalidatedAt > 0 ? '（已失效）' : ''
+    lines.push(`- ${fact.subject} · ${fact.attribute} → ${fact.value}${suffix}（${fact.seenCount ?? 1} 次${fact.sessionTitle ? `·${fact.sessionTitle}` : ''}）`)
+  }
+  return lines.join('\n')
+}
+
+/**
+ * Human-readable summary layers.
+ * @param {{ sessions: Array<Record<string, any>>, daily: Array<Record<string, any>>, weekly: Array<Record<string, any>> }} summaries Layers.
+ * @returns {string} Text.
+ */
+function renderSummariesText(summaries) {
+  const sessions = Array.isArray(summaries?.sessions) ? summaries.sessions : []
+  const daily = Array.isArray(summaries?.daily) ? summaries.daily : []
+  const weekly = Array.isArray(summaries?.weekly) ? summaries.weekly : []
+  if (sessions.length + daily.length + weekly.length === 0) return '还没有摘要（摘要层可能关闭，或还没有可汇总的记忆）。'
+  const lines = []
+  if (sessions.length > 0) {
+    lines.push(`会话摘要 ${sessions.length} 条：`)
+    for (const summary of sessions.slice(0, 10)) lines.push(`- [${summary.sessionId ?? ''}] ${summary.title ?? ''}：${summary.text}`)
+  }
+  if (daily.length > 0) {
+    lines.push(`每日汇总 ${daily.length} 条：`)
+    for (const summary of daily.slice(0, 7)) lines.push(`- ${summary.date}：${summary.text}`)
+  }
+  if (weekly.length > 0) {
+    lines.push(`每周汇总 ${weekly.length} 条：`)
+    for (const summary of weekly.slice(0, 4)) lines.push(`- ${summary.week}：${summary.text}`)
+  }
+  return lines.join('\n')
+}
+
+/**
+ * Human-readable list for the RECALL tool action. Handles raw memories,
+ * structured facts and summary-layer entries from layered retrieval.
+ * @param {Array<Record<string, any>>} items Ranked retrieval items.
+ * @param {{ query: string, tag: string, layer?: string }} filters Applied filters.
+ * @returns {string} Text.
+ */
+function renderRecallText(items, filters) {
+  const list = Array.isArray(items) ? items.filter((item) => item !== null && typeof item === 'object') : []
+  if (list.length === 0) {
     const hints = []
     if (filters.query !== '') hints.push(`关键词「${filters.query}」`)
     if (filters.tag !== '') hints.push(`标签「${filters.tag}」`)
     return hints.length === 0 ? '记忆库里还没有可回忆的内容。' : `没有找到匹配${hints.join('、')}的记忆（可能已经遗忘）。`
   }
-  const lines = [`想起 ${memories.length} 条记忆：`]
-  for (const memory of memories) {
-    const percent = Math.round(memory.retention * 100)
-    const task = memory.sessionTitle !== '' ? memory.sessionTitle : memory.sessionId
-    lines.push(`- [${memory.id}]（${memory.kind === 'semantic' ? '语义' : '情节'}·保持 ${percent}%·${task}）${memory.excerpt}`)
-    if (memory.tags.length > 0) lines.push(`  标签：${memory.tags.join('、')}`)
+  const memories = list.filter((item) => item.kind === 'episode' || item.kind === 'semantic')
+  const facts = list.filter((item) => item.kind === 'fact')
+  const summaries = list.filter((item) => typeof item.kind === 'string' && item.kind.endsWith('-summary'))
+  const lines = []
+  if (filters.layer !== undefined && filters.layer !== 'raw') lines.push(`检索层：${filters.layer}`)
+  if (facts.length > 0) {
+    lines.push(`结构化事实 ${facts.length} 条：`)
+    for (const fact of facts) {
+      const suffix = fact.invalidated === true ? '（已失效）' : ''
+      const task = fact.sessionTitle ? `·${fact.sessionTitle}` : ''
+      lines.push(`- ${fact.subject} · ${fact.attribute} → ${fact.value}${suffix}（${fact.seenCount ?? 1} 次${task}）`)
+    }
+  }
+  if (summaries.length > 0) {
+    lines.push(`摘要 ${summaries.length} 条：`)
+    for (const summary of summaries) {
+      const label = summary.kind === 'weekly-summary' ? `周 ${summary.week ?? ''}`
+        : summary.kind === 'daily-summary' ? `日 ${summary.date ?? ''}`
+          : `会话 ${summary.title ?? summary.sessionId ?? ''}`
+      lines.push(`- [${label}] ${summary.text}`)
+    }
+  }
+  if (memories.length > 0) {
+    lines.push(`想起 ${memories.length} 条记忆：`)
+    for (const memory of memories) {
+      const percent = Math.round(Number(memory.retention ?? 0) * 100)
+      const task = memory.sessionTitle !== '' ? memory.sessionTitle : memory.sessionId
+      lines.push(`- [${memory.id}]（${memory.kind === 'semantic' ? '语义' : '情节'}·保持 ${percent}%·${task}）${memory.excerpt}`)
+      if (Array.isArray(memory.tags) && memory.tags.length > 0) lines.push(`  标签：${memory.tags.join('、')}`)
+    }
   }
   return lines.join('\n')
 }

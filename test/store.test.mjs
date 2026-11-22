@@ -289,7 +289,7 @@ test('flush writes the persisted payload', async () => {
   await store.flush()
   assert.ok(writes.length >= 1)
   const last = writes[writes.length - 1]
-  assert.equal(last.version, 1)
+  assert.equal(last.version, 2)
   assert.ok(Array.isArray(last.memories) && last.memories.length === 1)
   assert.ok(last.settings !== undefined)
 })
@@ -305,7 +305,7 @@ test('snapshot exposes the complete read model with intact edges', () => {
   ingest(store, { turn: 1, sessionId: 'session-2', sessionTitle: '另一个任务' })
   const state = store.snapshot()
 
-  assert.equal(state.version, 1)
+  assert.equal(state.version, 2)
   assert.equal(typeof state.revision, 'number')
   assert.ok(state.now > 0)
   assert.ok(state.stats.total >= 3)
@@ -551,4 +551,123 @@ test('forgetting can be paused and resumed without losing or jumping memories', 
   reloaded.load(pausedPayload)
   assert.equal(reloaded.publicSettings().forgettingEnabled, false)
   assert.equal(reloaded.effectiveNow(), pausedPayload.forgettingPausedAt)
+})
+
+// ---------------------------------------------------------------------------
+// Layered memory (batches 1-3): facts, summaries, toggles, deletion coupling
+// ---------------------------------------------------------------------------
+
+test('ingesting turns extracts structured facts and merges duplicates', () => {
+  const { store } = makeStore()
+  ingest(store, { turn: 1, userTexts: ['我叫小明，我喜欢喝茶，我住在杭州。'] })
+  const first = store.listFacts({ limit: 50 })
+  assert.ok(first.some((fact) => fact.attribute === '称呼' && fact.value.includes('小明')), 'name fact extracted')
+  assert.ok(first.some((fact) => fact.value.includes('杭州')), 'location fact extracted')
+  ingest(store, { turn: 2, userTexts: ['再说一次：我叫小明，我喜欢喝茶。'] })
+  const second = store.listFacts({ limit: 50 })
+  const nameFacts = second.filter((fact) => fact.attribute === '称呼' && fact.value.includes('小明'))
+  assert.equal(nameFacts.length, 1, 'duplicate fact is merged, not duplicated')
+  assert.ok(nameFacts[0].seenCount >= 2, 'seenCount accumulates')
+})
+
+test('a newer value for the same subject and attribute supersedes the old one', () => {
+  const { store } = makeStore()
+  ingest(store, { turn: 1, userTexts: ['我住在杭州。'] })
+  ingest(store, { turn: 2, userTexts: ['我住在上海。'] })
+  const active = store.listFacts({ subject: '用户', limit: 50 }).filter((fact) => fact.attribute === '所在地')
+  assert.equal(active.length, 1, 'only the latest value stays valid')
+  assert.ok(active[0].value.includes('上海'))
+  const history = store.listFacts({ subject: '用户', includeSuperseded: true, limit: 50 }).filter((fact) => fact.attribute === '所在地')
+  assert.ok(history.some((fact) => fact.invalidatedAt > 0 && fact.value.includes('杭州')), 'old value kept as history')
+})
+
+test('batch-1 feature toggles roll back extraction, dedup and conflict independently', () => {
+  const { store } = makeStore()
+  store.updateFeatures({ factExtraction: false })
+  ingest(store, { turn: 1, userTexts: ['我叫小明。'] })
+  assert.equal(store.facts.length, 0, 'extraction off writes nothing')
+
+  store.updateFeatures({ factExtraction: true, factDedup: false, factConflict: true })
+  ingest(store, { turn: 2, userTexts: ['我叫小明。'] })
+  ingest(store, { turn: 3, userTexts: ['我叫小明。'] })
+  const dedupOffNames = store.facts.filter((fact) => fact.attribute === '称呼')
+  assert.equal(dedupOffNames.length, 1, 'dedup off reuses the same fact id')
+  assert.equal(dedupOffNames[0].seenCount, 1, 'dedup off does not accumulate seenCount')
+
+  store.updateFeatures({ factDedup: true, factConflict: false })
+  ingest(store, { turn: 4, userTexts: ['我叫小红。'] })
+  const activeNames = store.listFacts({ subject: '用户', limit: 50 }).filter((fact) => fact.attribute === '称呼')
+  assert.ok(activeNames.length >= 2, 'conflict off leaves both values valid')
+})
+
+test('facts derived from a memory are invalidated when its content is forgotten', () => {
+  const { store, advance } = makeStore()
+  ingest(store, { turn: 1, userTexts: ['我的幸运数字是 42。'] })
+  const fact = store.listFacts({ limit: 50 }).find((entry) => entry.value.includes('42'))
+  assert.ok(fact, 'fact extracted')
+  advance(DAY * 30)
+  assert.equal(store.sweepForgotten(), 1)
+  const stillActive = store.listFacts({ limit: 50 }).filter((entry) => entry.id === fact.id)
+  assert.equal(stillActive.length, 0, 'fact no longer returned once its only source memory is purged')
+  const all = store.listFacts({ includeSuperseded: true, limit: 50 }).filter((entry) => entry.id === fact.id)
+  assert.equal(all.length, 1)
+  assert.ok(all[0].invalidatedAt > 0, 'kept as a superseded tombstone fact')
+  assert.equal(store.summaries.sessions.length, 0, 'summary layers are cleared with their content')
+})
+
+test('summary layers are built and layered recall selects them by complexity', () => {
+  const { store } = makeStore()
+  ingest(store, { turn: 1, sessionId: 's1', sessionTitle: '插件开发', userTexts: ['我们在做记忆插件。'], assistantTexts: ['好的。'] })
+  ingest(store, { turn: 2, sessionId: 's2', sessionTitle: '晚饭', userTexts: ['晚上吃什么？'], assistantTexts: ['火锅。'] })
+  const counts = store.rebuildSummaries({ now: START })
+  assert.equal(counts.sessions, 2)
+  assert.ok(counts.daily >= 1, 'daily summary built')
+
+  const simple = store.recallWithContext({ query: '记忆插件', limit: 5, includeFacts: true })
+  assert.equal(simple.layer, 'raw')
+  const complex = store.recallWithContext({ query: '帮我总结一下最近都做了什么，整体回顾', limit: 8, includeFacts: true })
+  assert.equal(complex.layer, 'weekly')
+  assert.ok(complex.items.some((item) => String(item.kind).endsWith('-summary')), 'summary layer selected for complex questions')
+})
+
+test('batch-2 toggles roll back summary layers and layered recall', () => {
+  const { store } = makeStore()
+  ingest(store, { turn: 1, userTexts: ['我们在做记忆插件。'] })
+  store.updateFeatures({ sessionSummary: false, dailyWeeklySummary: false })
+  const counts = store.rebuildSummaries({ now: START })
+  assert.equal(counts.sessions, 0)
+  assert.equal(counts.daily, 0)
+  assert.equal(store.summaries.sessions.length, 0)
+  store.updateFeatures({ layeredRecall: false })
+  const result = store.recallWithContext({ query: '帮我总结最近所有事情', includeFacts: true })
+  assert.equal(result.layer, 'raw', 'layered recall off falls back to raw')
+})
+
+test('semantic recall computes offline embeddings and leaves forgetting untouched', () => {
+  const { store, advance } = makeStore()
+  const record = ingest(store, { turn: 1, userTexts: ['我们在讨论记忆插件的向量召回。'] })
+  store.updateFeatures({ semanticRecall: true })
+  assert.ok(store.memories.some((memory) => Array.isArray(memory.embedding) && memory.embedding.length > 0), 'embeddings derived offline')
+  const result = store.recallWithContext({ query: '记忆插件', includeFacts: true, limit: 5 })
+  assert.ok(Array.isArray(result.items))
+  advance(DAY * 30)
+  store.commitLight(() => store.sleep())
+  assert.ok(store.find(record.id) === undefined || store.find(record.id).contentPurged === true, 'forgetting curve still applies')
+})
+
+test('facts, summaries and feature toggles survive persistence reload', async () => {
+  const { store, writes } = makeStore()
+  ingest(store, { turn: 1, userTexts: ['我叫小明，我喜欢喝茶。'] })
+  store.rebuildSummaries({ now: START })
+  store.updateFeatures({ semanticRecall: true })
+  await store.flush()
+  const payload = writes.at(-1)
+  assert.equal(payload.features.semanticRecall, true)
+  assert.ok(payload.facts.length >= 1)
+  assert.ok(payload.summaries.sessions.length >= 1)
+  const reloaded = new MemoryStore({ now: () => START })
+  reloaded.load(payload)
+  assert.equal(reloaded.publicSettings().features.semanticRecall, true)
+  assert.ok(reloaded.listFacts({ limit: 20 }).length >= 1)
+  assert.ok(reloaded.summaries.sessions.length >= 1)
 })
