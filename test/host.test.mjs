@@ -504,6 +504,12 @@ test('layered-memory routes: features toggle, fact/summary rebuild and clear', a
     assert.equal(rebuiltFacts.body.ok, true)
     assert.ok(rebuiltFacts.body.state.factsStats.active >= 1)
 
+    // Re-running the same full rebuild must not grow or duplicate the bank.
+    const rebuiltFactsAgain = await callRoute(booted.routes, '/memory-brain/facts/rebuild', { method: 'POST', body: {} })
+    assert.equal(rebuiltFactsAgain.status, 200)
+    assert.equal(rebuiltFactsAgain.body.state.factsStats.active, rebuiltFacts.body.state.factsStats.active, 'rebuild route is idempotent')
+    assert.equal(rebuiltFactsAgain.body.state.factsStats.total, rebuiltFacts.body.state.factsStats.total)
+
     const rebuiltSummaries = await callRoute(booted.routes, '/memory-brain/summaries/rebuild', { method: 'POST', body: {} })
     assert.equal(rebuiltSummaries.status, 200)
     assert.ok(rebuiltSummaries.body.state.summaryStats.sessions >= 1)

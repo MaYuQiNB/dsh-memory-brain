@@ -526,7 +526,10 @@ export function apply(ctx) {
         return { ok: true, state, features: value }
       }
       case 'facts/rebuild': {
-        const { state, value } = await store.commitNow(() => store.rebuildFacts({ clear: body.clear === true }))
+        // Full re-extraction over the whole bank (old data included); clears
+        // first so running it repeatedly is idempotent instead of inflating
+        // seenCount. Pass clear=false only for a deliberate incremental pass.
+        const { state, value } = await store.commitNow(() => store.rebuildFacts({ clear: body.clear !== false }))
         return { ok: true, state, result: value }
       }
       case 'facts/clear': {
@@ -842,15 +845,17 @@ export function apply(ctx) {
         }
         case 'summaries': {
           const level = typeof args.level === 'string' ? args.level : 'all'
-          const summaries = store.listSummaries(level)
+          const limit = Number.isFinite(args.limit) ? args.limit : 10
+          const summaries = store.listSummaries(level, limit)
           return { ok: true, text: renderSummariesText(summaries), summaries }
         }
         case 'rebuild': {
           const target = typeof args.target === 'string' ? args.target : 'all'
-          const clear = args.clear === true
+          // Default is a full, idempotent re-extraction over the whole bank.
+          const clear = args.clear !== false
           if (target === 'facts') {
             const { value } = await store.commitNow(() => store.rebuildFacts({ clear }))
-            return { ok: true, text: `事实重建完成：共 ${value.total} 条（有效 ${value.active}，新增 ${value.added}，合并 ${value.merged}，冲突替换 ${value.superseded}）。`, result: value }
+            return { ok: true, text: `事实重建完成（${clear ? '全量重跑' : '增量'}）：共 ${value.total} 条（有效 ${value.active}，新增 ${value.added}，合并 ${value.merged}，冲突替换 ${value.superseded}）。可重复执行，不会产生重复条目。`, result: value }
           }
           if (target === 'summaries') {
             const { value } = await store.commitNow(() => store.rebuildSummaries({ now: Date.now() }))
@@ -860,7 +865,7 @@ export function apply(ctx) {
           const { value: summaryResult } = await store.commitNow(() => store.rebuildSummaries({ now: Date.now() }))
           return {
             ok: true,
-            text: `重建完成：事实 ${factsResult.total} 条（有效 ${factsResult.active}），会话摘要 ${summaryResult.sessions} 条、每日 ${summaryResult.daily} 条、每周 ${summaryResult.weekly} 条。`,
+            text: `重建完成（${clear ? '全量重跑' : '增量'}）：事实 ${factsResult.total} 条（有效 ${factsResult.active}），会话摘要 ${summaryResult.sessions} 条、每日 ${summaryResult.daily} 条、每周 ${summaryResult.weekly} 条。可重复执行，不会产生重复条目。`,
             facts: factsResult,
             summaries: summaryResult,
           }
@@ -1041,8 +1046,21 @@ function renderSummariesText(summaries) {
 }
 
 /**
+ * Clip one line of recall text so a full answer stays bounded.
+ * @param {unknown} value Raw text.
+ * @param {number} max Max characters.
+ * @returns {string} Clipped text.
+ */
+function clipText(value, max) {
+  const text = typeof value === 'string' ? value : ''
+  const chars = [...text]
+  return chars.length <= max ? text : `${chars.slice(0, max).join('')}…`
+}
+
+/**
  * Human-readable list for the RECALL tool action. Handles raw memories,
- * structured facts and summary-layer entries from layered retrieval.
+ * structured facts and summary-layer entries from layered retrieval. Every
+ * line is clipped so the answer cannot flood the model context.
  * @param {Array<Record<string, any>>} items Ranked retrieval items.
  * @param {{ query: string, tag: string, layer?: string }} filters Applied filters.
  * @returns {string} Text.
@@ -1064,8 +1082,8 @@ function renderRecallText(items, filters) {
     lines.push(`结构化事实 ${facts.length} 条：`)
     for (const fact of facts) {
       const suffix = fact.invalidated === true ? '（已失效）' : ''
-      const task = fact.sessionTitle ? `·${fact.sessionTitle}` : ''
-      lines.push(`- ${fact.subject} · ${fact.attribute} → ${fact.value}${suffix}（${fact.seenCount ?? 1} 次${task}）`)
+      const task = fact.sessionTitle ? `·${clipText(fact.sessionTitle, 40)}` : ''
+      lines.push(`- ${clipText(fact.subject, 30)} · ${clipText(fact.attribute, 20)} → ${clipText(fact.value, 80)}${suffix}（${fact.seenCount ?? 1} 次${task}）`)
     }
   }
   if (summaries.length > 0) {
@@ -1073,17 +1091,17 @@ function renderRecallText(items, filters) {
     for (const summary of summaries) {
       const label = summary.kind === 'weekly-summary' ? `周 ${summary.week ?? ''}`
         : summary.kind === 'daily-summary' ? `日 ${summary.date ?? ''}`
-          : `会话 ${summary.title ?? summary.sessionId ?? ''}`
-      lines.push(`- [${label}] ${summary.text}`)
+          : `会话 ${clipText(summary.title ?? summary.sessionId ?? '', 40)}`
+      lines.push(`- [${label}] ${clipText(summary.text, 160)}`)
     }
   }
   if (memories.length > 0) {
     lines.push(`想起 ${memories.length} 条记忆：`)
     for (const memory of memories) {
       const percent = Math.round(Number(memory.retention ?? 0) * 100)
-      const task = memory.sessionTitle !== '' ? memory.sessionTitle : memory.sessionId
-      lines.push(`- [${memory.id}]（${memory.kind === 'semantic' ? '语义' : '情节'}·保持 ${percent}%·${task}）${memory.excerpt}`)
-      if (Array.isArray(memory.tags) && memory.tags.length > 0) lines.push(`  标签：${memory.tags.join('、')}`)
+      const task = clipText(memory.sessionTitle !== '' ? memory.sessionTitle : memory.sessionId, 40)
+      lines.push(`- [${memory.id}]（${memory.kind === 'semantic' ? '语义' : '情节'}·保持 ${percent}%·${task}）${clipText(memory.excerpt, 160)}`)
+      if (Array.isArray(memory.tags) && memory.tags.length > 0) lines.push(`  标签：${clipText(memory.tags.join('、'), 60)}`)
     }
   }
   return lines.join('\n')
