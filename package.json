@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-brain",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "A human-brain-inspired memory system for DSH: tags every conversation turn, forgets by the Ebbinghaus curve over time, and renders the whole memory network as a full-page 3D force-directed graph.",
   "type": "module",
   "main": "index.js",

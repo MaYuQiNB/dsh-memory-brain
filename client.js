@@ -147,8 +147,8 @@ window.__ModuleLoader__.load({
       'canvas.tooltip.retention': '保持率 {value}%',
       'canvas.tooltip.session': '任务：{title}',
       'canvas.tooltip.turn': '第 {turn} 轮',
-      'canvas.hint3d': '拖拽旋转 · 滚轮缩放 · 点击节点看详情',
-      'canvas.aria3d': '三维记忆网络：拖拽旋转、滚轮缩放，点节点看详情',
+      'canvas.hint3d': '左键拖拽旋转 · 右键/Shift 拖拽平移 · 方向键/WASD 移动 · Q/E 转向 · 滚轮缩放 · 双击归位',
+      'canvas.aria3d': '三维记忆网络：左键拖拽旋转，右键或 Shift 拖拽平移，方向键移动，滚轮缩放，点节点看详情',
       'canvas.turnSuffix': '第{turn}轮',
       'view.switchLabel': '视图模式',
       'view.3d': '3D 立体',
@@ -353,8 +353,8 @@ window.__ModuleLoader__.load({
       'canvas.tooltip.retention': 'Retention {value}%',
       'canvas.tooltip.session': 'Task: {title}',
       'canvas.tooltip.turn': 'Turn {turn}',
-      'canvas.hint3d': 'Drag to rotate · wheel to zoom · click a node for details',
-      'canvas.aria3d': '3D memory network: drag to rotate, wheel to zoom, click a node for details',
+      'canvas.hint3d': 'Left-drag to rotate · right-drag or Shift-drag to pan · arrows/WASD to move · Q/E to turn · wheel to zoom · double-click to refit',
+      'canvas.aria3d': '3D memory network: left-drag rotates, right-drag or Shift-drag pans, arrow keys move, wheel zooms, click a node for details',
       'canvas.turnSuffix': 'turn {turn}',
       'view.switchLabel': 'View mode',
       'view.3d': '3D',
@@ -1724,11 +1724,17 @@ window.__ModuleLoader__.load({
     const WORLD_BOUND_3D = 2600
     const DEFAULT_YAW = -0.55
     const DEFAULT_PITCH = 0.34
-    const PITCH_LIMIT = 1.25
+    const PITCH_LIMIT = 1.52
     const DISTANCE_MIN = 260
     const DISTANCE_MAX = 8000
     const AUTO_ROTATE_STEP = 0.0015
     const INTERACTION_PAUSE_MS = 2000
+    /** Camera pan limit in world units; keeps the target near the memory cloud. */
+    const TARGET_LIMIT_3D = 20000
+    /** Keyboard camera speed (screen pixels per key). */
+    const KEY_PAN_PIXELS = 48
+    const KEY_YAW_STEP = 0.09
+    const KEY_ZOOM_FACTOR = 1.16
     const STAR_COUNT = 96
     const LABEL_MAX_CHARS = 16
     const TASK_NAME_MAX_CHARS = 8
@@ -1822,11 +1828,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Perspective orbit-camera projection (CONTRACT 7.2). Returns null for a
-     * point at/behind the camera (zCamera <= 1) and never produces NaN for
+     * Perspective orbit-camera projection (CONTRACT 7.2). The camera orbits
+     * `camera.target` (default the world origin) and pans by translating it, so
+     * the whole scene can be inspected from any angle and position. Returns null
+     * for a point at/behind the camera (zCamera <= 1) and never produces NaN for
      * finite or malformed input.
      * @param {{x: number, y: number, z: number}} point World point.
-     * @param {{yaw: number, pitch: number, distance: number}} camera
+     * @param {{yaw: number, pitch: number, distance: number, target?: {x: number, y: number, z: number}}} camera
      * @param {number} width CSS pixel width.
      * @param {number} height CSS pixel height.
      * @returns {{ x: number, y: number, zCamera: number, scale: number, depthScale: number } | null}
@@ -1835,9 +1843,10 @@ window.__ModuleLoader__.load({
       if (!(width > 0) || !(height > 0)) return null
       const safePoint = isObject(point) ? point : {}
       const safeCamera = isObject(camera) ? camera : {}
-      const x = num(safePoint.x, 0)
-      const y = num(safePoint.y, 0)
-      const z = num(safePoint.z, 0)
+      const target = isObject(safeCamera.target) ? safeCamera.target : {}
+      const x = num(safePoint.x, 0) - num(target.x, 0)
+      const y = num(safePoint.y, 0) - num(target.y, 0)
+      const z = num(safePoint.z, 0) - num(target.z, 0)
       const yaw = num(safeCamera.yaw, DEFAULT_YAW)
       const pitch = clamp(num(safeCamera.pitch, DEFAULT_PITCH), -PITCH_LIMIT, PITCH_LIMIT)
       const distance = clamp(num(safeCamera.distance, 1200), DISTANCE_MIN, DISTANCE_MAX)
@@ -1875,6 +1884,64 @@ window.__ModuleLoader__.load({
         right: { x: cosYaw, y: 0, z: -sinYaw },
         up: { x: -sinPitch * sinYaw, y: cosPitch, z: -sinPitch * cosYaw },
       }
+    }
+
+    /**
+     * Make sure a camera has a mutable pan target and keep it within a sane
+     * world bound (so a long drag cannot lose the memory cloud forever).
+     * @param {{target?: {x: number, y: number, z: number}}} camera
+     * @returns {{x: number, y: number, z: number}} The target.
+     */
+    function ensureCameraTarget(camera) {
+      if (!isObject(camera)) return { x: 0, y: 0, z: 0 }
+      if (!isObject(camera.target)) camera.target = { x: 0, y: 0, z: 0 }
+      const target = camera.target
+      target.x = clamp(num(target.x, 0), -TARGET_LIMIT_3D, TARGET_LIMIT_3D)
+      target.y = clamp(num(target.y, 0), -TARGET_LIMIT_3D, TARGET_LIMIT_3D)
+      target.z = clamp(num(target.z, 0), -TARGET_LIMIT_3D, TARGET_LIMIT_3D)
+      return target
+    }
+
+    /**
+     * Pan the orbit camera in its current view plane by a screen-pixel delta.
+     * The scene follows the pointer: dragging right moves the target left along
+     * the camera's right vector, dragging down moves it up along the up vector.
+     * @param {any} camera Orbit camera.
+     * @param {number} deltaX Screen pixels right.
+     * @param {number} deltaY Screen pixels down.
+     * @param {number} width CSS width.
+     * @param {number} height CSS height.
+     * @returns {boolean} Whether the target moved.
+     */
+    function panCamera(camera, deltaX, deltaY, width, height) {
+      if (!isObject(camera) || !(width > 0) || !(height > 0)) return false
+      if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return false
+      const target = ensureCameraTarget(camera)
+      const basis = cameraBasis(camera.yaw, camera.pitch)
+      const focal = 0.9 * Math.min(width, height)
+      if (!(focal > 0)) return false
+      const distance = clamp(num(camera.distance, 1200), DISTANCE_MIN, DISTANCE_MAX)
+      const worldPerPixel = distance / focal
+      target.x += (-basis.right.x * deltaX + basis.up.x * deltaY) * worldPerPixel
+      target.y += (-basis.right.y * deltaX + basis.up.y * deltaY) * worldPerPixel
+      target.z += (-basis.right.z * deltaX + basis.up.z * deltaY) * worldPerPixel
+      ensureCameraTarget(camera)
+      return true
+    }
+
+    /**
+     * Reset the orbit camera (yaw/pitch/distance/target) to its fitted default.
+     * @param {any} camera Orbit camera.
+     * @param {Map<string, {x: number, y: number, z: number}>} positions
+     */
+    function resetCamera3d(camera, positions) {
+      if (!isObject(camera)) return
+      camera.yaw = DEFAULT_YAW
+      camera.pitch = DEFAULT_PITCH
+      camera.distance = autoCameraDistance(positions)
+      camera.target = { x: 0, y: 0, z: 0 }
+      camera.fitted = true
+      camera.pauseUntil = 0
     }
 
     /** Depth factor for edges/nodes: 1.0 near → 0.18 far (CONTRACT 7.2). */
@@ -3608,6 +3675,7 @@ window.__ModuleLoader__.load({
         yaw: DEFAULT_YAW,
         pitch: DEFAULT_PITCH,
         distance: 1200,
+        target: { x: 0, y: 0, z: 0 },
         fitted: false,
         pauseUntil: 0,
       })
@@ -3838,12 +3906,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (resetSeq === lastResetRef.current) return
         lastResetRef.current = resetSeq
-        const camera = cameraRef.current
-        camera.yaw = DEFAULT_YAW
-        camera.pitch = DEFAULT_PITCH
-        camera.distance = autoCameraDistance(positionsRef.current)
-        camera.fitted = true
-        camera.pauseUntil = 0
+        resetCamera3d(cameraRef.current, positionsRef.current)
         draw()
       }, [resetSeq, draw])
 
@@ -3895,7 +3958,7 @@ window.__ModuleLoader__.load({
       }
 
       const onPointerDown = (event) => {
-        if (event.pointerType === 'mouse' && event.button !== 0) return
+        if (event.pointerType === 'mouse' && event.button !== 0 && event.button !== 1 && event.button !== 2) return
         // Let overlay controls (empty-state CTA, no-match reset) keep their clicks.
         const target = event.target
         if (target !== null && typeof target.closest === 'function'
@@ -3904,9 +3967,12 @@ window.__ModuleLoader__.load({
         const wrap = wrapRef.current
         if (position === null || wrap === null) return
         pauseAutoRotate()
-        const hitId = hitTest(position.x, position.y)
+        // Middle/right button and Shift+drag pan the camera instead of orbiting;
+        // this lets the user move the viewpoint (not just rotate around origin).
+        const panMode = event.button === 1 || event.button === 2 || event.shiftKey === true
+        const hitId = panMode ? null : hitTest(position.x, position.y)
         interactionRef.current = {
-          kind: hitId === null ? 'rotate' : 'node',
+          kind: panMode ? 'pan' : (hitId === null ? 'rotate' : 'node'),
           id: hitId,
           startX: position.x,
           startY: position.y,
@@ -3920,6 +3986,14 @@ window.__ModuleLoader__.load({
           reheat(14)
           onSelect(hitId)
           setDragging(true)
+        }
+        // Focus the canvas so the keyboard camera controls work immediately.
+        if (typeof wrap.focus === 'function') {
+          try {
+            wrap.focus({ preventScroll: true })
+          } catch {
+            wrap.focus()
+          }
         }
         if (typeof wrap.setPointerCapture === 'function') {
           try {
@@ -3943,6 +4017,12 @@ window.__ModuleLoader__.load({
           interaction.lastX = position.x
           interaction.lastY = position.y
           if (Math.abs(position.x - interaction.startX) + Math.abs(position.y - interaction.startY) > 3) interaction.moved = true
+          if (interaction.kind === 'pan') {
+            panCamera(camera, deltaX, deltaY, current.width, current.height)
+            pauseAutoRotate()
+            draw()
+            return
+          }
           if (interaction.kind === 'rotate') {
             // CONTRACT 7.4: yaw += dx*0.006, pitch -= dy*0.006, clamped.
             camera.yaw += deltaX * 0.006
@@ -4021,6 +4101,47 @@ window.__ModuleLoader__.load({
         draw()
       }
 
+      /**
+       * Keyboard camera: arrows/WASD pan, Q/E yaw, +/- zoom, R/0 reset.
+       * Only fires while the canvas itself is focused, so typing elsewhere is
+       * never intercepted.
+       */
+      const onKeyDown = (event) => {
+        const target = event.target
+        if (target !== null && typeof target.closest === 'function'
+          && target.closest('input, textarea, select, [contenteditable="true"]') !== null) return
+        const camera = cameraRef.current
+        const current = sizeRef.current
+        if (!(current.width > 0) || !(current.height > 0)) return
+        const key = event.key
+        let handled = true
+        if (key === 'ArrowLeft' || key === 'a' || key === 'A') {
+          panCamera(camera, -KEY_PAN_PIXELS, 0, current.width, current.height)
+        } else if (key === 'ArrowRight' || key === 'd' || key === 'D') {
+          panCamera(camera, KEY_PAN_PIXELS, 0, current.width, current.height)
+        } else if (key === 'ArrowUp' || key === 'w' || key === 'W') {
+          panCamera(camera, 0, -KEY_PAN_PIXELS, current.width, current.height)
+        } else if (key === 'ArrowDown' || key === 's' || key === 'S') {
+          panCamera(camera, 0, KEY_PAN_PIXELS, current.width, current.height)
+        } else if (key === 'q' || key === 'Q') {
+          camera.yaw -= KEY_YAW_STEP
+        } else if (key === 'e' || key === 'E') {
+          camera.yaw += KEY_YAW_STEP
+        } else if (key === '+' || key === '=') {
+          camera.distance = clamp(camera.distance / KEY_ZOOM_FACTOR, DISTANCE_MIN, DISTANCE_MAX)
+        } else if (key === '-' || key === '_') {
+          camera.distance = clamp(camera.distance * KEY_ZOOM_FACTOR, DISTANCE_MIN, DISTANCE_MAX)
+        } else if (key === '0' || key === 'r' || key === 'R') {
+          resetCamera3d(camera, positionsRef.current)
+        } else {
+          handled = false
+        }
+        if (!handled) return
+        event.preventDefault()
+        pauseAutoRotate()
+        draw()
+      }
+
       const hoveredNode = hoverNode === null || data === null ? null : data.byId.get(hoverNode.id) ?? null
       const hoverPosition = hoverNode === null || hoveredNode === null ? null : {
         x: clamp(hoverNode.x, 90, Math.max(90, size.width - 90)),
@@ -4031,11 +4152,21 @@ window.__ModuleLoader__.load({
         ref: wrapRef,
         className: 'dsh-memory-brain-canvas3dWrap',
         'data-dragging': dragging,
+        tabIndex: 0,
+        role: 'application',
+        'aria-label': t('canvas.aria3d'),
+        style: { outline: 'none' },
         onPointerDown,
         onPointerMove,
         onPointerUp: endInteraction,
         onPointerCancel: endInteraction,
         onPointerLeave,
+        onContextMenu: (event) => event.preventDefault(),
+        onDoubleClick: () => {
+          resetCamera3d(cameraRef.current, positionsRef.current)
+          draw()
+        },
+        onKeyDown,
       },
         h('canvas', {
           ref: canvasRef,
