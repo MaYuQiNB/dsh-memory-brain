@@ -1044,6 +1044,7 @@ function renderCameraControlsText(controls) {
     `上下反转 ${source.invertY === true ? '开' : '关'}`,
     `键盘 ${keyboardNames[source.keyboardLayout] ?? 'WASD+方向键'}`,
     `双击归位 ${source.doubleClickReset === false ? '关' : '开'}`,
+    `节点文字 ${source.showNodeLabels === false ? '关' : '开'}`,
   ].join(' · ')
 }
 

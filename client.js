@@ -86,6 +86,7 @@ window.__ModuleLoader__.load({
       invertY: false,
       keyboardLayout: 'both',
       doubleClickReset: true,
+      showNodeLabels: true,
     }
     const CAMERA_ENUMS = {
       rotateButton: ['left', 'right'],
@@ -112,6 +113,7 @@ window.__ModuleLoader__.load({
       }
       if (source.invertY !== undefined) controls.invertY = source.invertY === true
       if (source.doubleClickReset !== undefined) controls.doubleClickReset = source.doubleClickReset !== false
+      if (source.showNodeLabels !== undefined) controls.showNodeLabels = source.showNodeLabels !== false
       return controls
     }
 
@@ -291,6 +293,8 @@ window.__ModuleLoader__.load({
       'settings.cameraKeyboardOff': '关闭键盘',
       'settings.cameraDoubleReset': '双击画布归位',
       'settings.cameraDoubleResetHint': '双击画布恢复默认视角（R / 0 始终可用）。',
+      'settings.cameraLabels': '显示节点文字',
+      'settings.cameraLabelsHint': '关掉后 3D 网只显示球体和连线，界面更干净；悬停提示和详情不受影响。',
       'settings.cameraReset': '恢复默认操作',
       'settings.forgetting': '启用遗忘',
       'settings.forgettingHint': '关闭后记忆会冻结：停止衰减、不会到点删除内容；重新开启后从冻结时刻继续计算。',
@@ -520,6 +524,8 @@ window.__ModuleLoader__.load({
       'settings.cameraKeyboardOff': 'Keyboard off',
       'settings.cameraDoubleReset': 'Double-click to refit',
       'settings.cameraDoubleResetHint': 'Double-click the canvas to restore the default view (R / 0 always work).',
+      'settings.cameraLabels': 'Show node labels',
+      'settings.cameraLabelsHint': 'Turn off for a cleaner node cloud; hover tooltips and details still work.',
       'settings.cameraReset': 'Restore default controls',
       'settings.forgetting': 'Enable forgetting',
       'settings.forgettingHint': 'When off, memories freeze: no decay and no deletion at the forgetting time. Re-enabling resumes decay from the frozen moment.',
@@ -2450,72 +2456,80 @@ window.__ModuleLoader__.load({
 
       // Labels: one per visible node, near-first placement priority. A label is
       // never dropped — if every candidate overlaps, it still draws at alpha
-      // 0.45 on top (CONTRACT 7.5).
-      const labelItems = projectedNodes.slice().sort((left, right) => left.point.zCamera - right.point.zCamera)
-      const placedBoxes = []
+      // 0.45 on top (CONTRACT 7.5). The whole layer can be switched off in the
+      // panel (CONTRACT 二十二) to inspect the bare node cloud.
+      const showLabels = (() => {
+        const settings = isObject(data) && isObject(data.settings) ? data.settings : null
+        const controls = settings !== null && isObject(settings.cameraControls) ? settings.cameraControls : null
+        return controls === null || controls.showNodeLabels !== false
+      })()
       const labels = []
-      for (const item of labelItems) {
-        const node = item.node
-        const point = item.point
-        const fontSize = clamp(10, 10 + (num(camera.distance, 1200) / Math.max(1, point.zCamera)) * 1.5, 13)
-        const font = `${fontSize.toFixed(1)}px ui-sans-serif, system-ui, -apple-system, sans-serif`
-        const text = nodeDisplayName(node, props.t)
-        const textWidth = measureLabelWidth(context, text, font)
-        const boxWidth = textWidth + 12
-        const boxHeight = fontSize + 7
-        const radius = item.radius
-        const belowCandidate = { x: point.x - boxWidth / 2, y: point.y + radius + 6 }
-        const aboveCandidate = { x: point.x - boxWidth / 2, y: point.y - radius - 6 - boxHeight }
-        const leftCandidate = { x: point.x - radius - 6 - boxWidth, y: point.y - boxHeight / 2 }
-        const rightCandidate = { x: point.x + radius + 6, y: point.y - boxHeight / 2 }
-        // CONTRACT 7.5: default below the node; if that would leave the canvas,
-        // keep the label readable by drawing it above first (then left/right).
-        const candidates = belowCandidate.y + boxHeight > height - 2
-          ? [aboveCandidate, belowCandidate, leftCandidate, rightCandidate]
-          : [belowCandidate, aboveCandidate, leftCandidate, rightCandidate]
-        let chosen = null
-        for (const candidate of candidates) {
-          const box = {
-            x: clamp(candidate.x, 2, Math.max(2, width - boxWidth - 2)),
-            y: clamp(candidate.y, 2, Math.max(2, height - boxHeight - 2)),
-            width: boxWidth,
-            height: boxHeight,
+      if (showLabels) {
+        const labelItems = projectedNodes.slice().sort((left, right) => left.point.zCamera - right.point.zCamera)
+        const placedBoxes = []
+        for (const item of labelItems) {
+          const node = item.node
+          const point = item.point
+          const fontSize = clamp(10, 10 + (num(camera.distance, 1200) / Math.max(1, point.zCamera)) * 1.5, 13)
+          const font = `${fontSize.toFixed(1)}px ui-sans-serif, system-ui, -apple-system, sans-serif`
+          const text = nodeDisplayName(node, props.t)
+          const textWidth = measureLabelWidth(context, text, font)
+          const boxWidth = textWidth + 12
+          const boxHeight = fontSize + 7
+          const radius = item.radius
+          const belowCandidate = { x: point.x - boxWidth / 2, y: point.y + radius + 6 }
+          const aboveCandidate = { x: point.x - boxWidth / 2, y: point.y - radius - 6 - boxHeight }
+          const leftCandidate = { x: point.x - radius - 6 - boxWidth, y: point.y - boxHeight / 2 }
+          const rightCandidate = { x: point.x + radius + 6, y: point.y - boxHeight / 2 }
+          // CONTRACT 7.5: default below the node; if that would leave the canvas,
+          // keep the label readable by drawing it above first (then left/right).
+          const candidates = belowCandidate.y + boxHeight > height - 2
+            ? [aboveCandidate, belowCandidate, leftCandidate, rightCandidate]
+            : [belowCandidate, aboveCandidate, leftCandidate, rightCandidate]
+          let chosen = null
+          for (const candidate of candidates) {
+            const box = {
+              x: clamp(candidate.x, 2, Math.max(2, width - boxWidth - 2)),
+              y: clamp(candidate.y, 2, Math.max(2, height - boxHeight - 2)),
+              width: boxWidth,
+              height: boxHeight,
+            }
+            if (!labelsOverlap(box, placedBoxes)) {
+              chosen = box
+              break
+            }
           }
-          if (!labelsOverlap(box, placedBoxes)) {
-            chosen = box
-            break
+          let alpha = labelDepthAlpha(point.zCamera, camera.distance)
+          if (chosen === null) {
+            chosen = {
+              x: clamp(candidates[0].x, 2, Math.max(2, width - boxWidth - 2)),
+              y: clamp(candidates[0].y, 2, Math.max(2, height - boxHeight - 2)),
+              width: boxWidth,
+              height: boxHeight,
+            }
+            alpha = 0.45
           }
+          const selected = node.id === selectedId
+          const hovered = node.id === hoverId
+          if (selected || hovered) alpha = Math.max(alpha, 0.95)
+          placedBoxes.push(chosen)
+          labels.push({ node, box: chosen, text, font, alpha })
         }
-        let alpha = labelDepthAlpha(point.zCamera, camera.distance)
-        if (chosen === null) {
-          chosen = {
-            x: clamp(candidates[0].x, 2, Math.max(2, width - boxWidth - 2)),
-            y: clamp(candidates[0].y, 2, Math.max(2, height - boxHeight - 2)),
-            width: boxWidth,
-            height: boxHeight,
-          }
-          alpha = 0.45
+        for (const label of labels) {
+          context.globalAlpha = label.alpha
+          context.fillStyle = colors['bg-overlay'] || colors['bg-layer-1']
+          context.strokeStyle = colors['border-l3']
+          context.lineWidth = 1
+          roundedRectPath(context, label.box.x, label.box.y, label.box.width, label.box.height, 5)
+          context.fill()
+          context.stroke()
+          context.globalAlpha = label.alpha
+          context.fillStyle = colors['label-primary']
+          context.font = label.font
+          context.textAlign = 'center'
+          context.textBaseline = 'middle'
+          context.fillText(label.text, label.box.x + label.box.width / 2, label.box.y + label.box.height / 2 + 0.5)
         }
-        const selected = node.id === selectedId
-        const hovered = node.id === hoverId
-        if (selected || hovered) alpha = Math.max(alpha, 0.95)
-        placedBoxes.push(chosen)
-        labels.push({ node, box: chosen, text, font, alpha })
-      }
-      for (const label of labels) {
-        context.globalAlpha = label.alpha
-        context.fillStyle = colors['bg-overlay'] || colors['bg-layer-1']
-        context.strokeStyle = colors['border-l3']
-        context.lineWidth = 1
-        roundedRectPath(context, label.box.x, label.box.y, label.box.width, label.box.height, 5)
-        context.fill()
-        context.stroke()
-        context.globalAlpha = label.alpha
-        context.fillStyle = colors['label-primary']
-        context.font = label.font
-        context.textAlign = 'center'
-        context.textBaseline = 'middle'
-        context.fillText(label.text, label.box.x + label.box.width / 2, label.box.y + label.box.height / 2 + 0.5)
       }
       context.globalAlpha = 1
       return { visibleNodes: projectedNodes.length, labelsDrawn: labels.length }
@@ -3254,6 +3268,12 @@ window.__ModuleLoader__.load({
                 checked: cameraDraft.doubleClickReset !== false,
                 hint: t('settings.cameraDoubleResetHint'),
                 onChange: (next) => setCamera({ doubleClickReset: next }),
+              }),
+              h(Toggle, {
+                label: t('settings.cameraLabels'),
+                checked: cameraDraft.showNodeLabels !== false,
+                hint: t('settings.cameraLabelsHint'),
+                onChange: (next) => setCamera({ showNodeLabels: next }),
               }),
               h('button', {
                 type: 'button',

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * End-to-end tests for the memory store on top of the pure memory engine:
  * encoding, forgetting over time, rehearsal, forgetting/restoring/pinning,
  * sleep consolidation, capacity, persistence round-trip and the read model.
@@ -683,14 +683,16 @@ test('camera controls are customizable, validated and persisted', async () => {
     invertY: false,
     keyboardLayout: 'both',
     doubleClickReset: true,
+    showNodeLabels: true,
   })
-  const updated = store.updateCameraControls({ rotateButton: 'right', panGesture: 'middle', rotateSpeed: 9, panSpeed: 0.1, invertY: true, keyboardLayout: 'wasd' })
+  const updated = store.updateCameraControls({ rotateButton: 'right', panGesture: 'middle', rotateSpeed: 9, panSpeed: 0.1, invertY: true, keyboardLayout: 'wasd', showNodeLabels: false })
   assert.equal(updated.rotateButton, 'right')
   assert.equal(updated.panGesture, 'middle')
   assert.equal(updated.rotateSpeed, 3, 'rotate speed is clamped to 3')
   assert.equal(updated.panSpeed, 0.2, 'pan speed is clamped to 0.2')
   assert.equal(updated.invertY, true)
   assert.equal(updated.keyboardLayout, 'wasd')
+  assert.equal(updated.showNodeLabels, false)
 
   const fallback = store.updateCameraControls({ panGesture: 'bogus', keyboardLayout: 'bogus' })
   assert.equal(fallback.panGesture, 'middle', 'unknown gesture keeps the previous value')
@@ -708,4 +710,5 @@ test('camera controls are customizable, validated and persisted', async () => {
   assert.equal(reset.rotateButton, 'left')
   assert.equal(reset.rotateSpeed, 1)
   assert.equal(reset.invertY, false)
+  assert.equal(reset.showNodeLabels, true)
 })
