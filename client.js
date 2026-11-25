@@ -189,7 +189,7 @@ window.__ModuleLoader__.load({
       'canvas.tooltip.retention': '保持率 {value}%',
       'canvas.tooltip.session': '任务：{title}',
       'canvas.tooltip.turn': '第 {turn} 轮',
-      'canvas.hint3d': '左键拖拽旋转 · 右键/Shift 拖拽平移 · 方向键/WASD 移动 · Q/E 转向 · 滚轮缩放 · 双击归位',
+      'canvas.hint3d': '左键拖拽旋转 · 右键/Shift 拖拽平移 · 方向键/WASD 移动 · Q/E 转向 · 滚轮缩放 · 悬停/点击节点看文字 · 双击归位',
       'canvas.aria3d': '三维记忆网络：左键拖拽旋转，右键或 Shift 拖拽平移，方向键移动，滚轮缩放，点节点看详情',
       'canvas.turnSuffix': '第{turn}轮',
       'view.switchLabel': '视图模式',
@@ -420,7 +420,7 @@ window.__ModuleLoader__.load({
       'canvas.tooltip.retention': 'Retention {value}%',
       'canvas.tooltip.session': 'Task: {title}',
       'canvas.tooltip.turn': 'Turn {turn}',
-      'canvas.hint3d': 'Left-drag to rotate · right-drag or Shift-drag to pan · arrows/WASD to move · Q/E to turn · wheel to zoom · double-click to refit',
+      'canvas.hint3d': 'Left-drag to rotate · right-drag or Shift-drag to pan · arrows/WASD to move · Q/E to turn · wheel to zoom · hover/click a node to read its text · double-click to refit',
       'canvas.aria3d': '3D memory network: left-drag rotates, right-drag or Shift-drag pans, arrow keys move, wheel zooms, click a node for details',
       'canvas.turnSuffix': 'turn {turn}',
       'view.switchLabel': 'View mode',
@@ -2957,7 +2957,7 @@ window.__ModuleLoader__.load({
       ]
       return h('section', { className: 'dsh-memory-brain-section' },
         h('div', { className: 'dsh-memory-brain-detailHead' },
-          h('h2', { className: 'dsh-memory-brain-detailTitle' }, tombstone ? t('tombstone.label') : `${node.label || '·'}`),
+          h('h2', { className: 'dsh-memory-brain-detailTitle' }, nodeDisplayName(node, t)),
           h('span', { className: 'dsh-memory-brain-badge', 'data-tone': tone }, stateLabel)),
         node.kind === 'semantic'
           ? h('p', { className: 'dsh-memory-brain-hint' }, t('detail.semanticNote', { count: node.memberIds.length }))
@@ -3857,7 +3857,7 @@ window.__ModuleLoader__.load({
             role: 'tooltip',
             style: { left: `${Math.round(hoverPosition.x)}px`, top: `${Math.round(hoverPosition.y)}px` },
           },
-          h('div', { className: 'dsh-memory-brain-tooltipTitle' }, isTombstoneNode(hoveredNode) ? t('tombstone.label') : (hoveredNode.label || '·')),
+          h('div', { className: 'dsh-memory-brain-tooltipTitle' }, nodeDisplayName(hoveredNode, t)),
           h('div', { className: 'dsh-memory-brain-tooltipMeta' },
             t('canvas.tooltip.retention', {
               value: Math.round((projected.has(hoveredNode.id) ? projected.get(hoveredNode.id) : hoveredNode.retention) * 100),
@@ -3867,6 +3867,9 @@ window.__ModuleLoader__.load({
             : (hoveredNode.sessionTitle === ''
               ? null
               : h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('canvas.tooltip.session', { title: hoveredNode.sessionTitle }))),
+          isTombstoneNode(hoveredNode) || hoveredNode.kind !== 'episode' || typeof hoveredNode.excerpt !== 'string' || hoveredNode.excerpt === ''
+            ? null
+            : h('div', { className: 'dsh-memory-brain-tooltipMeta' }, truncateDisplayName(hoveredNode.excerpt, 60)),
           hoveredNode.kind === 'episode'
             ? h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('canvas.tooltip.turn', { turn: Math.round(num(hoveredNode.turn, 0)) }))
             : null))
@@ -4417,7 +4420,7 @@ window.__ModuleLoader__.load({
             role: 'tooltip',
             style: { left: `${Math.round(hoverPosition.x)}px`, top: `${Math.round(hoverPosition.y)}px` },
           },
-          h('div', { className: 'dsh-memory-brain-tooltipTitle' }, isTombstoneNode(hoveredNode) ? t('tombstone.label') : (hoveredNode.label || '·')),
+          h('div', { className: 'dsh-memory-brain-tooltipTitle' }, nodeDisplayName(hoveredNode, t)),
           h('div', { className: 'dsh-memory-brain-tooltipMeta' },
             t('canvas.tooltip.retention', {
               value: Math.round((projected.has(hoveredNode.id) ? projected.get(hoveredNode.id) : hoveredNode.retention) * 100),
@@ -4427,6 +4430,9 @@ window.__ModuleLoader__.load({
             : (hoveredNode.sessionTitle === ''
               ? null
               : h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('canvas.tooltip.session', { title: hoveredNode.sessionTitle }))),
+          isTombstoneNode(hoveredNode) || hoveredNode.kind !== 'episode' || typeof hoveredNode.excerpt !== 'string' || hoveredNode.excerpt === ''
+            ? null
+            : h('div', { className: 'dsh-memory-brain-tooltipMeta' }, truncateDisplayName(hoveredNode.excerpt, 60)),
           hoveredNode.kind === 'episode'
             ? h('div', { className: 'dsh-memory-brain-tooltipMeta' }, t('canvas.tooltip.turn', { turn: Math.round(num(hoveredNode.turn, 0)) }))
             : null))
